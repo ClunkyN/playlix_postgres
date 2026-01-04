@@ -1,5 +1,3 @@
-source("login.R")
-source("top_rated_page.R")
 options(shiny.suppressBootstrapModalPadding = TRUE)  
 options(shiny.maxRequestSize = 200 * 1024^2)
 
@@ -9,6 +7,8 @@ library(DBI)
 library(RMySQL)
 library(jsonlite)
 
+source("login.R")
+source("top_rated_page.R")
 
 
 # ======================================================
