@@ -47,7 +47,7 @@ get_con <- function() {
   )
   
   # Ensure table exists so SELECT won't crash your worker
-  DBI::dbExecute(ensure_con(), "
+  DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS movies (
       id INT AUTO_INCREMENT PRIMARY KEY,
       title VARCHAR(255) NOT NULL,
@@ -202,10 +202,12 @@ server <- function(input, output, session) {
         tags$h2("Database connection error"),
         tags$pre(db_error()),
         tags$p("Fix Render → Environment variables, then redeploy."),
-        tags$p("Also confirm DB_SSL_CA points to the correct ca.pem path inside the container.")
+        tags$p("Also confirm DB_SSL_CA points to the correct ca.pem path inside the container."),
+        
+        br(),
+        actionButton("retry_db", "Retry Connection", class = "play-btn")
       )
     } else {
-      # your normal login / main_ui logic
       if (logged_in()) main_ui else login_ui
     }
   })
@@ -222,7 +224,33 @@ server <- function(input, output, session) {
   
   ensure_con <- function() {
     if (is.null(con) || !DBI::dbIsValid(con)) {
-      con <<- get_con()
+      tryCatch({
+        con <<- get_con()
+        db_error(NULL)
+        
+        DBI::dbExecute(con, "
+        CREATE TABLE IF NOT EXISTS movies (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          title VARCHAR(255) NOT NULL,
+          year_released INT,
+          genre VARCHAR(255),
+          type VARCHAR(50),
+          description TEXT,
+          finished TINYINT(1) DEFAULT 0,
+          rating DECIMAL(3,1) DEFAULT NULL,
+          poster_path TEXT,
+          video_path LONGTEXT,
+          youtube_trailer TEXT,
+          favorite TINYINT(1) DEFAULT 0,
+          currently_watching TINYINT(1) DEFAULT 0,
+          last_season INT DEFAULT NULL,
+          last_episode INT DEFAULT NULL
+        )
+      ")
+      }, error = function(e) {
+        db_error(conditionMessage(e))
+        stop(e)
+      })
     }
     con
   }
@@ -450,9 +478,9 @@ server <- function(input, output, session) {
   
   load_movies <- reactive({
     refresh_trigger()
-    dbGetQuery(con(),"SELECT * FROM movies ORDER BY id DESC")
-    
+    DBI::dbGetQuery(ensure_con(), "SELECT * FROM movies ORDER BY id DESC")
   })
+  
   top_rated_server(input, output, session, load_movies)
   
   filtered_movies <- reactive({
@@ -1528,7 +1556,7 @@ server <- function(input, output, session) {
           
           dbExecute(ensure_con(), paste0(
             "UPDATE movies SET ",
-            "title=", dbQuoteString(ensure_con, input$edit_title), ",",
+            "title=", dbQuoteString(ensure_con(), input$edit_title), ",",
             "year_released=", input$edit_year, ",",
             "genre=", dbQuoteString(ensure_con(), input$edit_genre), ",",
             "type=", dbQuoteString(ensure_con(), input$edit_type), ",",
