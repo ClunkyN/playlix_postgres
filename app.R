@@ -4,12 +4,13 @@ options(shiny.maxRequestSize = 200 * 1024^2)
 library(shiny)
 library(shinyWidgets)
 library(DBI)
-library(RMySQL)
-library(jsonlite)
 library(RMariaDB)
+library(jsonlite)
 
 source("login.R")
 source("top_rated_page.R")
+
+
 
 
 # ======================================================
@@ -20,8 +21,8 @@ main_ui <- fluidPage(
   tags$head(
     tags$link(rel = "stylesheet", type = "text/css", href = "style.css"),
     
-
-  tags$script(src = "app.js")),
+    
+    tags$script(src = "app.js")),
   
   div(
     id = "app-root",
@@ -48,7 +49,7 @@ main_ui <- fluidPage(
       actionButton("go_home", "🏠 Home", class = "page-btn"),
       actionButton("go_top_rated", "⭐ Top Rated", class = "page-btn")
     ),
-  
+    
   ),
   uiOutput("add_button_ui"),
   div(
@@ -65,7 +66,7 @@ ui <- fluidPage(
 # SERVER
 # ======================================================
 server <- function(input, output, session) {
-  # ---------- DB CONNECT (AIVEN) ----------
+  # ================= CLOUD MYSQL (AIVEN) SAFE CONNECT =================
   get_con <- function() {
     DB_HOST   <- Sys.getenv("DB_HOST", "")
     DB_PORT   <- as.integer(Sys.getenv("DB_PORT", "3306"))
@@ -74,18 +75,11 @@ server <- function(input, output, session) {
     DB_NAME   <- Sys.getenv("DB_NAME", "")
     DB_SSL_CA <- Sys.getenv("DB_SSL_CA", "")
     
-    message("DB_HOST=", DB_HOST)
-    message("DB_PORT=", DB_PORT)
-    message("DB_USER=", DB_USER)
-    message("DB_NAME=", DB_NAME)
-    message("DB_SSL_CA=", DB_SSL_CA)
-    message("CA exists? ", if (nzchar(DB_SSL_CA)) file.exists(DB_SSL_CA) else "no path")
-    
     if (!nzchar(DB_HOST) || !nzchar(DB_USER) || !nzchar(DB_NAME)) {
       stop("Missing DB env vars (DB_HOST/DB_USER/DB_NAME).")
     }
     if (!nzchar(DB_SSL_CA) || !file.exists(DB_SSL_CA)) {
-      stop("CA cert not found. Check DB_SSL_CA path.")
+      stop(paste0("CA cert not found. DB_SSL_CA=", DB_SSL_CA))
     }
     
     DBI::dbConnect(
@@ -101,7 +95,6 @@ server <- function(input, output, session) {
     )
   }
   
-  # ---------- RUN DB (connect per query = no random disconnect) ----------
   db_exec <- function(sql, params = NULL) {
     con <- get_con()
     on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
@@ -114,7 +107,6 @@ server <- function(input, output, session) {
     DBI::dbGetQuery(con, sql, params = params)
   }
   
-  # ---------- Ensure table exists (run once per session load) ----------
   tryCatch({
     db_exec("
     CREATE TABLE IF NOT EXISTS movies (
@@ -135,166 +127,22 @@ server <- function(input, output, session) {
       last_episode INT DEFAULT NULL
     )
   ")
-    db_error(NULL)
   }, error = function(e) {
-    db_error(conditionMessage(e))
-    message("DB CONNECTION ERROR: ", conditionMessage(e))
+    message("DB INIT ERROR: ", conditionMessage(e))
   })
   
-  # Always read env vars INSIDE server (per worker)
-  get_con <- function() {
-    DB_HOST   <- Sys.getenv("DB_HOST")
-    DB_PORT   <- as.integer(Sys.getenv("DB_PORT", "3306"))
-    DB_USER   <- Sys.getenv("DB_USER")
-    DB_PASS   <- Sys.getenv("DB_PASS")
-    DB_NAME   <- Sys.getenv("DB_NAME")
-    DB_SSL_CA <- Sys.getenv("DB_SSL_CA")
-    
-    message("DB_HOST=", DB_HOST)
-    message("DB_PORT=", DB_PORT)
-    message("DB_USER=", DB_USER)
-    message("DB_NAME=", DB_NAME)
-    message("DB_SSL_CA=", DB_SSL_CA)
-    message("CA exists? ", if (nzchar(DB_SSL_CA)) file.exists(DB_SSL_CA) else "no path")
-    
-    if (!nzchar(DB_HOST) || !nzchar(DB_USER) || !nzchar(DB_NAME)) {
-      stop("Missing DB env vars (DB_HOST/DB_USER/DB_NAME).")
-    }
-    if (!nzchar(DB_SSL_CA) || !file.exists(DB_SSL_CA)) {
-      stop("CA cert not found. Check DB_SSL_CA path + repo has ca.pem.")
-    }
-    
-    DBI::dbConnect(
-      RMariaDB::MariaDB(),
-      host = DB_HOST,
-      port = DB_PORT,
-      user = DB_USER,
-      password = DB_PASS,
-      dbname = DB_NAME,
-      ssl.ca = DB_SSL_CA,
-      ssl.verify.server.cert = TRUE
-    )
-  }
-  
-  con <- NULL
-  db_error <- reactiveVal(NULL) 
   
   logged_in <- reactiveVal(FALSE) 
   
-  tryCatch({
-    con <<- get_con()
-    DBI::db_exec("
-  CREATE TABLE IF NOT EXISTS movies (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    title VARCHAR(255) NOT NULL,
-    year_released INT,
-    genre VARCHAR(255),
-    type VARCHAR(50),
-    description TEXT,
-    finished TINYINT(1) DEFAULT 0,
-    rating DECIMAL(3,1) DEFAULT NULL,
-    poster_path TEXT,
-    video_path LONGTEXT,
-    youtube_trailer TEXT,
-    favorite TINYINT(1) DEFAULT 0,
-    currently_watching TINYINT(1) DEFAULT 0,
-    last_season INT DEFAULT NULL,
-    last_episode INT DEFAULT NULL
-  )
-")
-    db_error(NULL)
-  }, error = function(e) {
-    db_error(conditionMessage(e))
-    message("DB CONNECTION ERROR: ", conditionMessage(e))
-  })
-  
-  onStop(function() {
-    if (!is.null(con)) try(DBI::dbDisconnect(con), silent = TRUE)
-  })
-  
-  # Show either the app or a DB error screen (but DO NOT EXIT)
-  output$app_page <- renderUI({
-    if (!is.null(db_error())) {
-      div(
-        style="min-height:100vh; background:#000; color:#fff; padding:40px; font-family:Arial;",
-        tags$h2("Database connection error"),
-        tags$pre(db_error()),
-        tags$p("Fix Render → Environment variables, then redeploy."),
-        tags$p("Also confirm DB_SSL_CA points to the correct ca.pem path inside the container."),
-        
-        br(),
-        actionButton("retry_db", "Retry Connection", class = "play-btn")
-      )
-    } else {
-      if (logged_in()) main_ui else login_ui
-    }
-  })
-
-  observeEvent(input$retry_db, {
-    tryCatch({
-      con <<- get_con()
-      db_error(NULL)
-    }, error = function(e) {
-      db_error(conditionMessage(e))
-      message("DB CONNECTION ERROR: ", conditionMessage(e))
-    })
-  })
-  
-  ensure_con <- function() {
-    if (is.null(con) || !DBI::dbIsValid(con)) {
-      tryCatch({
-        con <<- get_con()
-        db_error(NULL)
-        
-        DBI::db_exec("
-        CREATE TABLE IF NOT EXISTS movies (
-          id INT AUTO_INCREMENT PRIMARY KEY,
-          title VARCHAR(255) NOT NULL,
-          year_released INT,
-          genre VARCHAR(255),
-          type VARCHAR(50),
-          description TEXT,
-          finished TINYINT(1) DEFAULT 0,
-          rating DECIMAL(3,1) DEFAULT NULL,
-          poster_path TEXT,
-          video_path LONGTEXT,
-          youtube_trailer TEXT,
-          favorite TINYINT(1) DEFAULT 0,
-          currently_watching TINYINT(1) DEFAULT 0,
-          last_season INT DEFAULT NULL,
-          last_episode INT DEFAULT NULL
-        )
-      ")
-      }, error = function(e) {
-        db_error(conditionMessage(e))
-        stop(e)
-      })
-    }
-    con
-  }
-  
-  db_exec <- function(sql, params = NULL) {
-    tryCatch({
-      DBI::dbExecute(ensure_con(), sql, params = params)
-    }, error = function(e) {
-      # retry once after reconnect
-      con <<- NULL
-      DBI::dbExecute(ensure_con(), sql, params = params)
-    })
-  }
-  
-  db_get <- function(sql, params = NULL) {
-    tryCatch({
-      DBI::dbGetQuery(ensure_con(), sql, params = params)
-    }, error = function(e) {
-      # retry once after reconnect
-      con <<- NULL
-      DBI::dbGetQuery(ensure_con(), sql, params = params)
-    })
-  }
-  
   login_server(input, output, session, logged_in)
-
+  output$app_page <- renderUI({
+    if (logged_in()) {
+      main_ui
+    } else {
+      login_ui
+    }
+  })
+  
   refresh_trigger <- reactiveVal(0)
   
   current_detail_id <- reactiveVal(NULL)
@@ -353,7 +201,7 @@ server <- function(input, output, session) {
     
     movies <- load_movies()
     m <- db_get("SELECT * FROM movies WHERE id = ?", params = list(as.integer(mid)))
-
+    
     req(nrow(m) == 1)
     
     yt_id <- ""
@@ -516,8 +364,8 @@ server <- function(input, output, session) {
   load_movies <- reactive({
     refresh_trigger()
     db_get("SELECT * FROM movies ORDER BY id DESC")
+    
   })
-  
   top_rated_server(input, output, session, load_movies)
   
   filtered_movies <- reactive({
@@ -657,7 +505,7 @@ server <- function(input, output, session) {
     showNotification("Logged out successfully", type = "message")
   })
   
-
+  
   normalize_drive_url <- function(url) {
     if (grepl("drive.google.com", url)) {
       id <- sub(".*?/d/([^/]+).*", "\\1", url)
@@ -671,7 +519,8 @@ server <- function(input, output, session) {
                                e   = current_episode_idx()) {
     if (is.null(mid) || is.null(s) || is.null(e)) return()
     
-    db_exec(
+    dbExecute(
+      con,
       paste0(
         "UPDATE movies SET ",
         "last_season = ", as.integer(s), ", ",
@@ -746,7 +595,8 @@ server <- function(input, output, session) {
           
           
           
-          db_exec(
+          dbExecute(
+            con,
             paste0(
               "UPDATE movies 
               SET finished = 1,
@@ -968,7 +818,7 @@ server <- function(input, output, session) {
     
     if (nrow(m) == 1 && !isTRUE(m$finished == 1)) {
       save_tv_progress()    
-      }
+    }
     
     refresh_trigger(refresh_trigger() + 1)
     
@@ -1061,14 +911,8 @@ server <- function(input, output, session) {
         
         new_val <- ifelse(m$favorite == 1, 0, 1)
         
-        db_exec(
-          paste0(
-            "UPDATE movies SET favorite = ",
-            new_val,
-            " WHERE id = ",
-            mid
-          )
-        )
+        db_exec("UPDATE movies SET favorite = ? WHERE id = ?",
+                params = list(as.integer(new_val), as.integer(mid)))
         
         refresh_trigger(refresh_trigger() + 1)
         
@@ -1079,7 +923,7 @@ server <- function(input, output, session) {
   observeEvent(input$open_detail, {
     mid <- as.numeric(input$open_detail)
     req(mid)
-
+    
     if (!allow_click(paste0("open_detail_", mid))) return()
     
     m <- load_movies()[load_movies()$id == mid, ]
@@ -1276,7 +1120,7 @@ server <- function(input, output, session) {
                     class = "favorite-only-badge",
                     HTML("&#10084; FAVORITE")
                   )
-              
+                  
                   
                 },
                 
@@ -1315,7 +1159,8 @@ server <- function(input, output, session) {
         rating <- as.numeric(input$detail_rating)
         rating_sql <- if (is.na(rating)) "NULL" else round(rating, 1)
         
-        db_exec(
+        dbExecute(
+          con,
           paste0(
             "UPDATE movies SET
             finished = 1,
@@ -1329,7 +1174,8 @@ server <- function(input, output, session) {
         
       } else {
         
-        db_exec(
+        dbExecute(
+          con,
           paste0(
             "UPDATE movies 
            SET finished = 0,
@@ -1362,7 +1208,7 @@ server <- function(input, output, session) {
         
         observeEvent(input$confirm_delete_movie, {
           if (!allow_click(paste0("confirm_delete_", mid))) return()
-          db_exec(paste0("DELETE FROM movies WHERE id = ", mid))
+          dbExecute(con, paste0("DELETE FROM movies WHERE id = ", mid))
           removeModal()
           removeModal()
           refresh_trigger(refresh_trigger() + 1)
@@ -1586,16 +1432,16 @@ server <- function(input, output, session) {
             video_db <- jsonlite::toJSON(seasons, auto_unbox = TRUE)
           }
           
-          dbExecute(ensure_con(), paste0(
+          dbExecute(con, paste0(
             "UPDATE movies SET ",
-            "title=", dbQuoteString(ensure_con(), input$edit_title), ",",
+            "title=", dbQuoteString(con, input$edit_title), ",",
             "year_released=", input$edit_year, ",",
-            "genre=", dbQuoteString(ensure_con(), input$edit_genre), ",",
-            "type=", dbQuoteString(ensure_con(), input$edit_type), ",",
-            "description=", dbQuoteString(ensure_con(), input$edit_desc), ",",
-            "poster_path=", dbQuoteString(ensure_con(), input$edit_poster), ",",
-            "video_path=", dbQuoteString(ensure_con(), video_db), ",",
-            "youtube_trailer=", dbQuoteString(ensure_con(), input$edit_trailer),
+            "genre=", dbQuoteString(con, input$edit_genre), ",",
+            "type=", dbQuoteString(con, input$edit_type), ",",
+            "description=", dbQuoteString(con, input$edit_desc), ",",
+            "poster_path=", dbQuoteString(con, input$edit_poster), ",",
+            "video_path=", dbQuoteString(con, video_db), ",",
+            "youtube_trailer=", dbQuoteString(con, input$edit_trailer),
             " WHERE id=", mid
           ))
           
@@ -1645,7 +1491,8 @@ server <- function(input, output, session) {
           
           # 🔒 DO NOT override finished movies
           if (!isTRUE(m$finished == 1)) {
-            db_exec(
+            dbExecute(
+              con,
               paste0(
                 "UPDATE movies SET
          currently_watching = 1
@@ -2094,19 +1941,20 @@ server <- function(input, output, session) {
       video_db <- jsonlite::toJSON(seasons, auto_unbox = TRUE)
     }
     
-    db_exec(
+    dbExecute(
+      con,
       paste0(
         "INSERT INTO movies (title,year_released,genre,type,description,finished,rating,poster_path,video_path,youtube_trailer) VALUES(",
-        dbQuoteString(ensure_con(), input$new_title), ",",
+        dbQuoteString(con, input$new_title), ",",
         input$new_year, ",",
-        dbQuoteString(ensure_con(), input$new_genre), ",",
-        dbQuoteString(ensure_con(), input$new_type), ",",
-        dbQuoteString(ensure_con(), input$new_desc), ",",
+        dbQuoteString(con, input$new_genre), ",",
+        dbQuoteString(con, input$new_type), ",",
+        dbQuoteString(con, input$new_desc), ",",
         "0,",            # finished = FALSE by default
         "NULL,",         # rating = NULL by default
-        dbQuoteString(ensure_con(), input$poster_url), ",",
-        dbQuoteString(ensure_con(), video_db), ",",
-        dbQuoteString(ensure_con(), input$new_trailer),
+        dbQuoteString(con, input$poster_url), ",",
+        dbQuoteString(con, video_db), ",",
+        dbQuoteString(con, input$new_trailer),
         ")"
       )
     )
@@ -2116,5 +1964,3 @@ server <- function(input, output, session) {
     showNotification("Saved successfully!",type="message")
   })
 }
-
-shinyApp(ui, server)
