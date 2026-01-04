@@ -1,0 +1,9 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+.git
+.gitignore
+.DS_Store
+Thumbs.db
