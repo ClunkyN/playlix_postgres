@@ -12,49 +12,32 @@ source("login.R")
 source("top_rated_page.R")
 
 
-DB_HOST   <- Sys.getenv("DB_HOST")
-DB_PORT   <- as.integer(Sys.getenv("DB_PORT", "3306"))
-DB_USER   <- Sys.getenv("DB_USER")
-DB_PASS   <- Sys.getenv("DB_PASS")
-DB_NAME   <- Sys.getenv("DB_NAME")
+DB_HOST <- Sys.getenv("DB_HOST")
+DB_PORT <- as.integer(Sys.getenv("DB_PORT", "3306"))
+DB_USER <- Sys.getenv("DB_USER")
+DB_PASS <- Sys.getenv("DB_PASS")
+DB_NAME <- Sys.getenv("DB_NAME")
 DB_SSL_CA <- Sys.getenv("DB_SSL_CA")
 
-get_con <- function() {
-  # Validate env vars so the error is clear (but handled)
-  missing <- c()
-  if (!nzchar(DB_HOST)) missing <- c(missing, "DB_HOST")
-  if (!nzchar(DB_USER)) missing <- c(missing, "DB_USER")
-  if (!nzchar(DB_NAME)) missing <- c(missing, "DB_NAME")
-  
-  if (length(missing) > 0) {
-    stop("Missing required env vars: ", paste(missing, collapse = ", "))
+con <- tryCatch(
+  {
+    dbConnect(
+      RMariaDB::MariaDB(),
+      host = DB_HOST,
+      port = DB_PORT,
+      user = DB_USER,
+      password = DB_PASS,
+      dbname = DB_NAME,
+      ssl.ca = DB_SSL_CA,
+      ssl.verify.server.cert = TRUE
+    )
+  },
+  error = function(e) {
+    stop(paste0("❌ Failed to connect to Aiven MySQL: ", conditionMessage(e)))
   }
-  
-  # If SSL CA path is provided, verify it exists
-  if (nzchar(DB_SSL_CA) && !file.exists(DB_SSL_CA)) {
-    stop("DB_SSL_CA file not found at: ", DB_SSL_CA)
-  }
-  
-  args <- list(
-    drv      = RMariaDB::MariaDB(),
-    host     = DB_HOST,
-    port     = DB_PORT,
-    user     = DB_USER,
-    password = DB_PASS,
-    dbname   = DB_NAME
-  )
-  
-  # SSL options only if provided
-  if (nzchar(DB_SSL_CA)) {
-    args$ssl.ca <- DB_SSL_CA
-    args$ssl.verify.server.cert <- TRUE
-  }
-  
-  do.call(DBI::dbConnect, args)
-}
+)
 
-# IMPORTANT: do NOT connect here globally.
-# We'll connect inside server so the app doesn't crash on startup.
+cat("✅ Connected to Aiven MySQL successfully\n")
 
 # ======================================================
 # UI
@@ -109,24 +92,6 @@ ui <- fluidPage(
 # SERVER
 # ======================================================
 server <- function(input, output, session) {
-  con <- NULL
-  onStop(function() {
-    if (!is.null(con)) try(DBI::dbDisconnect(con), silent = TRUE)
-  })
-  
-  con <- tryCatch(
-    get_con(),
-    error = function(e) {
-      # Show in Render logs + in UI without crashing the app
-      message("DB CONNECTION ERROR: ", conditionMessage(e))
-      showNotification(
-        paste("Database connection error:", conditionMessage(e)),
-        type = "error",
-        duration = NULL
-      )
-      NULL
-    }
-  )
   
   logged_in <- reactiveVal(FALSE) 
   
