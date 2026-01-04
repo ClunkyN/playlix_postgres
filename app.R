@@ -11,64 +11,6 @@ library(RMariaDB)
 source("login.R")
 source("top_rated_page.R")
 
-# ================= DB (AIVEN) =================
-get_con <- function() {
-  DB_HOST   <- Sys.getenv("DB_HOST", "")
-  DB_PORT   <- as.integer(Sys.getenv("DB_PORT", "3306"))
-  DB_USER   <- Sys.getenv("DB_USER", "")
-  DB_PASS   <- Sys.getenv("DB_PASS", "")
-  DB_NAME   <- Sys.getenv("DB_NAME", "")
-  DB_SSL_CA <- Sys.getenv("DB_SSL_CA", "")
-  
-  # logs (no password)
-  message("DB_HOST=", DB_HOST)
-  message("DB_PORT=", DB_PORT)
-  message("DB_USER=", DB_USER)
-  message("DB_NAME=", DB_NAME)
-  message("DB_SSL_CA=", DB_SSL_CA)
-  message("CA exists? ", if (nzchar(DB_SSL_CA)) file.exists(DB_SSL_CA) else "no path")
-  
-  if (!nzchar(DB_HOST) || !nzchar(DB_USER) || !nzchar(DB_NAME)) {
-    stop("Missing DB env vars (DB_HOST/DB_USER/DB_NAME). Check Render → Environment.")
-  }
-  if (!nzchar(DB_SSL_CA) || !file.exists(DB_SSL_CA)) {
-    stop("CA cert not found. Ensure DB_SSL_CA points to the real ca.pem path inside the container.")
-  }
-  
-  con <- DBI::dbConnect(
-    RMariaDB::MariaDB(),
-    host = DB_HOST,
-    port = DB_PORT,
-    user = DB_USER,
-    password = DB_PASS,
-    dbname = DB_NAME,
-    ssl.ca = DB_SSL_CA,
-    ssl.verify.server.cert = TRUE
-  )
-  
-  # Ensure table exists so SELECT won't crash your worker
-  DBI::db_exec("
-    CREATE TABLE IF NOT EXISTS movies (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      title VARCHAR(255) NOT NULL,
-      year_released INT,
-      genre VARCHAR(255),
-      type VARCHAR(50),
-      description TEXT,
-      finished TINYINT(1) DEFAULT 0,
-      rating DECIMAL(3,1) DEFAULT NULL,
-      poster_path TEXT,
-      video_path LONGTEXT,
-      youtube_trailer TEXT,
-      favorite TINYINT(1) DEFAULT 0,
-      currently_watching TINYINT(1) DEFAULT 0,
-      last_season INT DEFAULT NULL,
-      last_episode INT DEFAULT NULL
-    )
-  ")
-  
-  con
-}
 
 # ======================================================
 # UI
@@ -123,6 +65,82 @@ ui <- fluidPage(
 # SERVER
 # ======================================================
 server <- function(input, output, session) {
+  # ---------- DB CONNECT (AIVEN) ----------
+  get_con <- function() {
+    DB_HOST   <- Sys.getenv("DB_HOST", "")
+    DB_PORT   <- as.integer(Sys.getenv("DB_PORT", "3306"))
+    DB_USER   <- Sys.getenv("DB_USER", "")
+    DB_PASS   <- Sys.getenv("DB_PASS", "")
+    DB_NAME   <- Sys.getenv("DB_NAME", "")
+    DB_SSL_CA <- Sys.getenv("DB_SSL_CA", "")
+    
+    message("DB_HOST=", DB_HOST)
+    message("DB_PORT=", DB_PORT)
+    message("DB_USER=", DB_USER)
+    message("DB_NAME=", DB_NAME)
+    message("DB_SSL_CA=", DB_SSL_CA)
+    message("CA exists? ", if (nzchar(DB_SSL_CA)) file.exists(DB_SSL_CA) else "no path")
+    
+    if (!nzchar(DB_HOST) || !nzchar(DB_USER) || !nzchar(DB_NAME)) {
+      stop("Missing DB env vars (DB_HOST/DB_USER/DB_NAME).")
+    }
+    if (!nzchar(DB_SSL_CA) || !file.exists(DB_SSL_CA)) {
+      stop("CA cert not found. Check DB_SSL_CA path.")
+    }
+    
+    DBI::dbConnect(
+      RMariaDB::MariaDB(),
+      host = DB_HOST,
+      port = DB_PORT,
+      user = DB_USER,
+      password = DB_PASS,
+      dbname = DB_NAME,
+      ssl.ca = DB_SSL_CA,
+      ssl.verify.server.cert = TRUE,
+      connect_timeout = 10
+    )
+  }
+  
+  # ---------- RUN DB (connect per query = no random disconnect) ----------
+  db_exec <- function(sql, params = NULL) {
+    con <- get_con()
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+    DBI::dbExecute(con, sql, params = params)
+  }
+  
+  db_get <- function(sql, params = NULL) {
+    con <- get_con()
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+    DBI::dbGetQuery(con, sql, params = params)
+  }
+  
+  # ---------- Ensure table exists (run once per session load) ----------
+  tryCatch({
+    db_exec("
+    CREATE TABLE IF NOT EXISTS movies (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      year_released INT,
+      genre VARCHAR(255),
+      type VARCHAR(50),
+      description TEXT,
+      finished TINYINT(1) DEFAULT 0,
+      rating DECIMAL(3,1) DEFAULT NULL,
+      poster_path TEXT,
+      video_path LONGTEXT,
+      youtube_trailer TEXT,
+      favorite TINYINT(1) DEFAULT 0,
+      currently_watching TINYINT(1) DEFAULT 0,
+      last_season INT DEFAULT NULL,
+      last_episode INT DEFAULT NULL
+    )
+  ")
+    db_error(NULL)
+  }, error = function(e) {
+    db_error(conditionMessage(e))
+    message("DB CONNECTION ERROR: ", conditionMessage(e))
+  })
+  
   # Always read env vars INSIDE server (per worker)
   get_con <- function() {
     DB_HOST   <- Sys.getenv("DB_HOST")
@@ -334,7 +352,7 @@ server <- function(input, output, session) {
   show_details_modal <- function(mid) {
     
     movies <- load_movies()
-    m <- dbGetQuery(ensure_con(), "SELECT * FROM movies WHERE id = ?", params = list(as.integer(mid)))
+    m <- db_get("SELECT * FROM movies WHERE id = ?", params = list(as.integer(mid)))
 
     req(nrow(m) == 1)
     
@@ -497,7 +515,7 @@ server <- function(input, output, session) {
   
   load_movies <- reactive({
     refresh_trigger()
-    DBI::dbGetQuery(ensure_con(), "SELECT * FROM movies ORDER BY id DESC")
+    db_get("SELECT * FROM movies ORDER BY id DESC")
   })
   
   top_rated_server(input, output, session, load_movies)
@@ -1344,7 +1362,7 @@ server <- function(input, output, session) {
         
         observeEvent(input$confirm_delete_movie, {
           if (!allow_click(paste0("confirm_delete_", mid))) return()
-          dbExecute(ensure_con(), paste0("DELETE FROM movies WHERE id = ", mid))
+          db_exec(paste0("DELETE FROM movies WHERE id = ", mid))
           removeModal()
           removeModal()
           refresh_trigger(refresh_trigger() + 1)
