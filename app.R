@@ -11,16 +11,16 @@ library(RMariaDB)
 source("login.R")
 source("top_rated_page.R")
 
-
-DB_HOST   <- Sys.getenv("DB_HOST")
-DB_PORT   <- as.integer(Sys.getenv("DB_PORT", "3306"))
-DB_USER   <- Sys.getenv("DB_USER")
-DB_PASS   <- Sys.getenv("DB_PASS")
-DB_NAME   <- Sys.getenv("DB_NAME")
-DB_SSL_CA <- Sys.getenv("DB_SSL_CA", "/srv/shiny-server/app/ca.pem")
-
+# ================= DB (AIVEN) =================
 get_con <- function() {
-  # log useful info in Render logs (no password printed)
+  DB_HOST   <- Sys.getenv("DB_HOST", "")
+  DB_PORT   <- as.integer(Sys.getenv("DB_PORT", "3306"))
+  DB_USER   <- Sys.getenv("DB_USER", "")
+  DB_PASS   <- Sys.getenv("DB_PASS", "")
+  DB_NAME   <- Sys.getenv("DB_NAME", "")
+  DB_SSL_CA <- Sys.getenv("DB_SSL_CA", "")
+  
+  # logs (no password)
   message("DB_HOST=", DB_HOST)
   message("DB_PORT=", DB_PORT)
   message("DB_USER=", DB_USER)
@@ -32,10 +32,10 @@ get_con <- function() {
     stop("Missing DB env vars (DB_HOST/DB_USER/DB_NAME). Check Render → Environment.")
   }
   if (!nzchar(DB_SSL_CA) || !file.exists(DB_SSL_CA)) {
-    stop("CA cert not found. Ensure ca.pem is in repo root and Dockerfile copies it.")
+    stop("CA cert not found. Ensure DB_SSL_CA points to the real ca.pem path inside the container.")
   }
   
-  DBI::dbConnect(
+  con <- DBI::dbConnect(
     RMariaDB::MariaDB(),
     host = DB_HOST,
     port = DB_PORT,
@@ -45,7 +45,31 @@ get_con <- function() {
     ssl.ca = DB_SSL_CA,
     ssl.verify.server.cert = TRUE
   )
+  
+  # Ensure table exists so SELECT won't crash your worker
+  DBI::dbExecute(con(), "
+    CREATE TABLE IF NOT EXISTS movies (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      year_released INT,
+      genre VARCHAR(255),
+      type VARCHAR(50),
+      description TEXT,
+      finished TINYINT(1) DEFAULT 0,
+      rating DECIMAL(3,1) DEFAULT NULL,
+      poster_path TEXT,
+      video_path LONGTEXT,
+      youtube_trailer TEXT,
+      favorite TINYINT(1) DEFAULT 0,
+      currently_watching TINYINT(1) DEFAULT 0,
+      last_season INT DEFAULT NULL,
+      last_episode INT DEFAULT NULL
+    )
+  ")
+  
+  con
 }
+
 # ======================================================
 # UI
 # ======================================================
@@ -99,7 +123,10 @@ ui <- fluidPage(
 # SERVER
 # ======================================================
 server <- function(input, output, session) {
-  # Always read env vars INSIDE server (per worker)
+  
+  `%||%` <- function(x, y) if (is.null(x) || identical(x, "")) y else x
+  
+  # --- DB connector (reads env vars per worker) ---
   get_con <- function() {
     DB_HOST   <- Sys.getenv("DB_HOST")
     DB_PORT   <- as.integer(Sys.getenv("DB_PORT", "3306"))
@@ -119,7 +146,7 @@ server <- function(input, output, session) {
       stop("Missing DB env vars (DB_HOST/DB_USER/DB_NAME).")
     }
     if (!nzchar(DB_SSL_CA) || !file.exists(DB_SSL_CA)) {
-      stop("CA cert not found. Check DB_SSL_CA path + repo has ca.pem.")
+      stop(paste0("CA cert not found at: ", DB_SSL_CA))
     }
     
     DBI::dbConnect(
@@ -134,38 +161,66 @@ server <- function(input, output, session) {
     )
   }
   
-  con <- NULL
-  db_error <- reactiveVal(NULL)
+  rv_db <- reactiveValues(con = NULL, ok = FALSE, msg = NULL)
   
-  tryCatch({
-    con <<- get_con()
-    db_error(NULL)
-  }, error = function(e) {
-    db_error(conditionMessage(e))
-    message("DB CONNECTION ERROR: ", conditionMessage(e))
+  connect_db <- function() {
+    tryCatch({
+      if (!is.null(rv_db$con)) {
+        try(DBI::dbDisconnect(rv_db$con), silent = TRUE)
+      }
+      rv_db$con <- get_con()
+      rv_db$ok  <- TRUE
+      rv_db$msg <- NULL
+      message("✅ Connected to DB")
+    }, error = function(e) {
+      rv_db$con <- NULL
+      rv_db$ok  <- FALSE
+      rv_db$msg <- conditionMessage(e)
+      message("❌ DB CONNECTION ERROR: ", rv_db$msg)
+    })
+  }
+  
+  # connect once when session is ready
+  session$onFlushed(function() connect_db(), once = TRUE)
+  
+  # optional manual retry button (you can add this in the DB-down UI)
+  observeEvent(input$retry_db, {
+    connect_db()
   })
   
   onStop(function() {
-    if (!is.null(con)) try(DBI::dbDisconnect(con), silent = TRUE)
+    if (!is.null(rv_db$con)) try(DBI::dbDisconnect(rv_db$con), silent = TRUE)
   })
   
-  # Show either the app or a DB error screen (but DO NOT EXIT)
+  # IMPORTANT: keep this as a FUNCTION that returns a REAL connection
+  con <- function() rv_db$con
+  
+  # ---- login state MUST be defined BEFORE output$app_page uses it ----
+  logged_in <- reactiveVal(FALSE)
+  
+  # ---- DB down screen (keeps worker alive) ----
   output$app_page <- renderUI({
-    if (!is.null(db_error())) {
-      div(
-        style="min-height:100vh; background:#000; color:#fff; padding:40px; font-family:Arial;",
-        tags$h2("Database connection error"),
-        tags$pre(db_error()),
-        tags$p("Fix Render → Environment variables, then redeploy."),
-        tags$p("Also confirm DB_SSL_CA points to the correct ca.pem path inside the container.")
+    if (!isTRUE(rv_db$ok)) {
+      fluidPage(
+        tags$head(tags$style(HTML("
+          body { background:#000; color:#fff; font-family: Helvetica, Arial, sans-serif; }
+          .dbbox { max-width:720px; margin:10vh auto; padding:24px; border:1px solid #333; border-radius:12px; background:#111; }
+          .dbbox h2 { margin:0 0 10px 0; color:#e50914; }
+          .dbbox code { display:block; white-space:pre-wrap; background:#0b0b0b; padding:12px; border-radius:8px; border:1px solid #222; }
+        "))),
+        div(class="dbbox",
+            h2("Database connection error"),
+            p("App is running, but DB connection failed."),
+            actionButton("retry_db", "Retry", class = "play-btn"),
+            tags$hr(),
+            tags$strong("Error details:"),
+            tags$code(rv_db$msg %||% "Unknown error")
+        )
       )
     } else {
-      # your normal login / main_ui logic
       if (logged_in()) main_ui else login_ui
     }
   })
-
-  logged_in <- reactiveVal(FALSE) 
   
   login_server(input, output, session, logged_in)
   output$app_page <- renderUI({
@@ -398,7 +453,7 @@ server <- function(input, output, session) {
   
   load_movies <- reactive({
     refresh_trigger()
-    dbGetQuery(con,"SELECT * FROM movies ORDER BY id DESC")
+    dbGetQuery(con(),"SELECT * FROM movies ORDER BY id DESC")
     
   })
   top_rated_server(input, output, session, load_movies)
@@ -1250,7 +1305,7 @@ server <- function(input, output, session) {
         
         observeEvent(input$confirm_delete_movie, {
           if (!allow_click(paste0("confirm_delete_", mid))) return()
-          dbExecute(con, paste0("DELETE FROM movies WHERE id = ", mid))
+          dbExecute(con(), paste0("DELETE FROM movies WHERE id = ", mid))
           removeModal()
           removeModal()
           refresh_trigger(refresh_trigger() + 1)
@@ -1474,16 +1529,16 @@ server <- function(input, output, session) {
             video_db <- jsonlite::toJSON(seasons, auto_unbox = TRUE)
           }
           
-          dbExecute(con, paste0(
+          dbExecute(con(), paste0(
             "UPDATE movies SET ",
-            "title=", dbQuoteString(con, input$edit_title), ",",
+            "title=", dbQuoteString(con(), input$edit_title), ",",
             "year_released=", input$edit_year, ",",
-            "genre=", dbQuoteString(con, input$edit_genre), ",",
-            "type=", dbQuoteString(con, input$edit_type), ",",
-            "description=", dbQuoteString(con, input$edit_desc), ",",
-            "poster_path=", dbQuoteString(con, input$edit_poster), ",",
-            "video_path=", dbQuoteString(con, video_db), ",",
-            "youtube_trailer=", dbQuoteString(con, input$edit_trailer),
+            "genre=", dbQuoteString(con(), input$edit_genre), ",",
+            "type=", dbQuoteString(con(), input$edit_type), ",",
+            "description=", dbQuoteString(con(), input$edit_desc), ",",
+            "poster_path=", dbQuoteString(con(), input$edit_poster), ",",
+            "video_path=", dbQuoteString(con(), video_db), ",",
+            "youtube_trailer=", dbQuoteString(con(), input$edit_trailer),
             " WHERE id=", mid
           ))
           
@@ -1987,16 +2042,16 @@ server <- function(input, output, session) {
       con,
       paste0(
         "INSERT INTO movies (title,year_released,genre,type,description,finished,rating,poster_path,video_path,youtube_trailer) VALUES(",
-        dbQuoteString(con, input$new_title), ",",
+        dbQuoteString(con(), input$new_title), ",",
         input$new_year, ",",
-        dbQuoteString(con, input$new_genre), ",",
-        dbQuoteString(con, input$new_type), ",",
-        dbQuoteString(con, input$new_desc), ",",
+        dbQuoteString(con(), input$new_genre), ",",
+        dbQuoteString(con(), input$new_type), ",",
+        dbQuoteString(con(), input$new_desc), ",",
         "0,",            # finished = FALSE by default
         "NULL,",         # rating = NULL by default
-        dbQuoteString(con, input$poster_url), ",",
-        dbQuoteString(con, video_db), ",",
-        dbQuoteString(con, input$new_trailer),
+        dbQuoteString(con(), input$poster_url), ",",
+        dbQuoteString(con(), video_db), ",",
+        dbQuoteString(con(), input$new_trailer),
         ")"
       )
     )
