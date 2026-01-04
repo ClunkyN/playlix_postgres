@@ -12,33 +12,40 @@ source("login.R")
 source("top_rated_page.R")
 
 
-DB_HOST <- Sys.getenv("DB_HOST")
-DB_PORT <- as.integer(Sys.getenv("DB_PORT", "3306"))
-DB_USER <- Sys.getenv("DB_USER")
-DB_PASS <- Sys.getenv("DB_PASS")
-DB_NAME <- Sys.getenv("DB_NAME")
+DB_HOST   <- Sys.getenv("DB_HOST")
+DB_PORT   <- as.integer(Sys.getenv("DB_PORT", "3306"))
+DB_USER   <- Sys.getenv("DB_USER")
+DB_PASS   <- Sys.getenv("DB_PASS")
+DB_NAME   <- Sys.getenv("DB_NAME")
 DB_SSL_CA <- Sys.getenv("DB_SSL_CA")
 
-con <- tryCatch(
-  {
-    dbConnect(
-      RMariaDB::MariaDB(),
-      host = DB_HOST,
-      port = DB_PORT,
-      user = DB_USER,
-      password = DB_PASS,
-      dbname = DB_NAME,
-      ssl.ca = DB_SSL_CA,
-      ssl.verify.server.cert = TRUE
-    )
-  },
-  error = function(e) {
-    stop(paste0("❌ Failed to connect to Aiven MySQL: ", conditionMessage(e)))
+get_con <- function() {
+  # log useful info in Render logs (no password printed)
+  message("DB_HOST=", DB_HOST)
+  message("DB_PORT=", DB_PORT)
+  message("DB_USER=", DB_USER)
+  message("DB_NAME=", DB_NAME)
+  message("DB_SSL_CA=", DB_SSL_CA)
+  message("CA exists? ", if (nzchar(DB_SSL_CA)) file.exists(DB_SSL_CA) else "no path")
+  
+  if (!nzchar(DB_HOST) || !nzchar(DB_USER) || !nzchar(DB_NAME)) {
+    stop("Missing DB env vars (DB_HOST/DB_USER/DB_NAME). Check Render → Environment.")
   }
-)
-
-cat("✅ Connected to Aiven MySQL successfully\n")
-
+  if (!nzchar(DB_SSL_CA) || !file.exists(DB_SSL_CA)) {
+    stop("CA cert not found. Ensure ca.pem is in repo root and Dockerfile copies it.")
+  }
+  
+  DBI::dbConnect(
+    RMariaDB::MariaDB(),
+    host = DB_HOST,
+    port = DB_PORT,
+    user = DB_USER,
+    password = DB_PASS,
+    dbname = DB_NAME,
+    ssl.ca = DB_SSL_CA,
+    ssl.verify.server.cert = TRUE
+  )
+}
 # ======================================================
 # UI
 # ======================================================
@@ -92,6 +99,27 @@ ui <- fluidPage(
 # SERVER
 # ======================================================
 server <- function(input, output, session) {
+  con <- NULL
+  onStop(function() {
+    if (!is.null(con)) try(DBI::dbDisconnect(con), silent = TRUE)
+  })
+  
+  con <- tryCatch(
+    get_con(),
+    error = function(e) {
+      message("DB CONNECTION ERROR: ", conditionMessage(e))
+      showNotification(
+        paste("Database connection error:", conditionMessage(e)),
+        type = "error",
+        duration = NULL
+      )
+      NULL
+    }
+  )
+  
+  # If no DB, stop running the rest of server logic to avoid more errors
+  if (is.null(con)) return()
+  
   
   logged_in <- reactiveVal(FALSE) 
   
