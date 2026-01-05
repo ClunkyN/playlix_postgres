@@ -44,6 +44,13 @@ get_con <- function() {
 }
 
 con <- get_con()
+
+if (!is.null(con)) {
+  message("✅ CONNECTED DB = ", dbGetQuery(con, "SELECT DATABASE() AS db")$db)
+  message("✅ movies rows = ", dbGetQuery(con, "SELECT COUNT(*) AS n FROM movies")$n)
+} else {
+  message("❌ con is NULL (DB connect failed)")
+}
 # ======================================================
 # UI
 # ======================================================
@@ -331,8 +338,22 @@ server <- function(input, output, session) {
   
   load_movies <- reactive({
     refresh_trigger()
-    req(!is.null(con))
-    dbGetQuery(con,"SELECT * FROM movies ORDER BY id DESC")
+    
+    # If DB connection failed, don't crash the app
+    if (is.null(con)) {
+      message("❌ load_movies: DB connection is NULL")
+      return(data.frame())
+    }
+    
+    out <- tryCatch(
+      dbGetQuery(con, "SELECT * FROM movies ORDER BY id DESC"),
+      error = function(e) {
+        message("❌ load_movies SQL error: ", conditionMessage(e))
+        data.frame()
+      }
+    )
+    
+    out
   })
   
   top_rated_server(input, output, session, load_movies)
