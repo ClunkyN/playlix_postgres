@@ -9,8 +9,12 @@ library(jsonlite)
 
 message("DB_HOST=", Sys.getenv("DB_HOST"))
 message("DB_PORT=", Sys.getenv("DB_PORT"))
+message("DB_USER=", Sys.getenv("DB_USER"))
 message("DB_NAME=", Sys.getenv("DB_NAME"))
+message("DB_SSL_CA env=", Sys.getenv("DB_SSL_CA"))
 message("DB_SSL_CA exists? ", file.exists(Sys.getenv("DB_SSL_CA")))
+message("/srv/shiny-server/ca.pem exists? ", file.exists("/srv/shiny-server/ca.pem"))
+
 
 source("login.R")
 source("top_rated_page.R")
@@ -20,6 +24,15 @@ source("top_rated_page.R")
 # ======================================================
 
 db_con <- function() {
+  ca <- Sys.getenv("DB_SSL_CA", "")
+  
+  # fallback to the Docker path you COPY'd
+  if (!nzchar(ca) || !file.exists(ca)) {
+    if (file.exists("/srv/shiny-server/ca.pem")) {
+      ca <- "/srv/shiny-server/ca.pem"
+    }
+  }
+  
   dbConnect(
     RMariaDB::MariaDB(),
     host     = Sys.getenv("DB_HOST"),
@@ -27,18 +40,28 @@ db_con <- function() {
     user     = Sys.getenv("DB_USER"),
     password = Sys.getenv("DB_PASS"),
     dbname   = Sys.getenv("DB_NAME"),
-    ssl.ca   = Sys.getenv("DB_SSL_CA")
+    ssl.ca   = ca,
+    ssl.verify.server.cert = TRUE,
+    timeout  = 10
   )
 }
 
 db_get <- function(sql) {
-  con <- db_con()
+  con <- tryCatch(db_con(), error = function(e) e)
+  if (inherits(con, "error")) {
+    message("❌ db_con failed in db_get: ", conditionMessage(con))
+    stop(con)
+  }
   on.exit(try(dbDisconnect(con), silent = TRUE), add = TRUE)
   dbGetQuery(con, sql)
 }
 
 db_exec <- function(sql) {
-  con <- db_con()
+  con <- tryCatch(db_con(), error = function(e) e)
+  if (inherits(con, "error")) {
+    message("❌ db_con failed in db_exec: ", conditionMessage(con))
+    stop(con)
+  }
   on.exit(try(dbDisconnect(con), silent = TRUE), add = TRUE)
   dbExecute(con, sql)
 }
@@ -104,7 +127,28 @@ ui <- fluidPage(
 # ======================================================
 server <- function(input, output, session) {
   
-  logged_in <- reactiveVal(FALSE) 
+  logged_in <- reactiveVal(FALSE)
+  observeEvent(logged_in(), {
+    req(logged_in())
+    
+    tryCatch({
+      dbn <- db_get("SELECT DATABASE() AS db")$db[1]
+      message("✅ Connected DB = ", dbn)
+      
+      tabs <- db_get("SHOW TABLES")
+      if (nrow(tabs) == 0) {
+        message("⚠ No tables found in this DB_NAME (empty schema).")
+      } else {
+        message("✅ Tables: ", paste(tabs[[1]], collapse = ", "))
+      }
+      
+      # check movies count
+      cnt <- db_get("SELECT COUNT(*) AS n FROM movies")$n[1]
+      message("✅ movies rows = ", cnt)
+    }, error = function(e) {
+      message("❌ DB sanity check failed: ", conditionMessage(e))
+    })
+  }, ignoreInit = TRUE)
   
   login_server(input, output, session, logged_in)
   output$app_page <- renderUI({
