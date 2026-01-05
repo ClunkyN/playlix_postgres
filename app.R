@@ -102,6 +102,12 @@ main_ui <- fluidPage(
       )
     ),
     
+    div(
+      style="padding:10px 20px; background:#111; color:#0f0; font-family:monospace; font-size:12px;",
+      strong("DB STATUS: "),
+      textOutput("db_status", inline = TRUE)
+    ),
+    
     div(style = "height: 78px;"),
     div(
       class = "page-nav",
@@ -128,6 +134,7 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   
   logged_in <- reactiveVal(FALSE)
+  
   observeEvent(logged_in(), {
     req(logged_in())
     
@@ -151,6 +158,7 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
   
   login_server(input, output, session, logged_in)
+  
   observeEvent(logged_in(), {
     req(logged_in())
     
@@ -160,32 +168,45 @@ server <- function(input, output, session) {
     message("DB_PORT=", Sys.getenv("DB_PORT"))
     message("DB_USER=", Sys.getenv("DB_USER"))
     message("DB_NAME=", Sys.getenv("DB_NAME"))
-    message("DB_SSL_CA=", Sys.getenv("DB_SSL_CA"))
+    message("DB_SSL_CA env=", Sys.getenv("DB_SSL_CA"))
     
     message("CA exists? ", file.exists(Sys.getenv("DB_SSL_CA")))
     message("Fallback CA exists? ", file.exists("/srv/shiny-server/ca.pem"))
     
     tryCatch({
       con <- db_con()
+      on.exit(try(dbDisconnect(con), silent = TRUE), add = TRUE)
+      
       message("✅ db_con(): SUCCESS")
       
-      dbname <- dbGetQuery(con, "SELECT DATABASE() AS db")$db[1]
-      message("✅ Connected database = ", dbname)
+      # PROOF 1: where am I connected?
+      host_now <- dbGetQuery(con, "SELECT @@hostname AS h")$h[1]
+      port_now <- dbGetQuery(con, "SELECT @@port AS p")$p[1]
+      user_now <- dbGetQuery(con, "SELECT CURRENT_USER() AS u")$u[1]
+      db_now   <- dbGetQuery(con, "SELECT DATABASE() AS d")$d[1]
+      ver_now  <- dbGetQuery(con, "SELECT VERSION() AS v")$v[1]
       
+      message("✅ SERVER_HOSTNAME=", host_now)
+      message("✅ SERVER_PORT=", port_now)
+      message("✅ CURRENT_USER=", user_now)
+      message("✅ DATABASE=", db_now)
+      message("✅ VERSION=", ver_now)
+      
+      # PROOF 2: schema sanity
       tables <- dbGetQuery(con, "SHOW TABLES")
       message("✅ Tables found = ", nrow(tables))
       if (nrow(tables) > 0) {
-        message("Tables: ", paste(tables[[1]], collapse = ", "))
+        message("✅ Tables: ", paste(tables[[1]], collapse = ", "))
       }
       
-      if ("movies" %in% tables[[1]]) {
+      # PROOF 3: your app table
+      if (nrow(tables) > 0 && "movies" %in% tables[[1]]) {
         cnt <- dbGetQuery(con, "SELECT COUNT(*) AS n FROM movies")$n[1]
         message("✅ movies row count = ", cnt)
       } else {
-        message("❌ movies table NOT FOUND")
+        message("❌ movies table NOT FOUND in this DB")
       }
       
-      dbDisconnect(con)
     }, error = function(e) {
       message("❌ DB CONNECTION FAILED: ", conditionMessage(e))
     })
