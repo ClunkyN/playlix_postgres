@@ -85,39 +85,62 @@ server <- function(input, output, session) {
   # ---------- DB CONNECTION HOLDER ----------
   con_rv <- reactiveVal(NULL)
   
-  connect_db <- function() {
-    # create a new connection
-    get_con()
-  }
+  connect_db <- function() get_con()
   
   ensure_con <- function() {
     con <- con_rv()
-    
-    # if missing or invalid, reconnect
     if (is.null(con) || !DBI::dbIsValid(con)) {
-      con <- tryCatch(
-        connect_db(),
-        error = function(e) {
-          showNotification(
-            paste("DB connection failed:", e$message),
-            type = "error",
-            duration = NULL
-          )
-          NULL
-        }
-      )
+      con <- tryCatch(connect_db(), error = function(e) {
+        showNotification(paste("DB connection failed:", e$message),
+                         type = "error", duration = NULL)
+        NULL
+      })
       con_rv(con)
     }
-    
     con_rv()
   }
   
-  # disconnect cleanly
+  # Quote helper (GLOBAL in server, not inside db_exec)
+  q <- function(x) {
+    con <- ensure_con()
+    if (is.null(con)) return("NULL")
+    if (is.null(x) || length(x) == 0 || is.na(x)) return("NULL")
+    DBI::dbQuoteString(con, as.character(x))
+  }
+  
+  db_get <- function(sql) {
+    con <- ensure_con()
+    if (is.null(con)) return(data.frame())
+    tryCatch(DBI::dbGetQuery(con, sql), error = function(e) {
+      showNotification(paste("DB query failed:", e$message),
+                       type = "error", duration = NULL)
+      data.frame()
+    })
+  }
+  
+  db_exec <- function(sql) {
+    con <- ensure_con()
+    if (is.null(con)) return(FALSE)
+    
+    if (!is.character(sql) || length(sql) != 1) {
+      showNotification("DB update failed: SQL is not a single string.", type="error", duration=NULL)
+      return(FALSE)
+    }
+    
+    tryCatch({
+      DBI::dbExecute(con, sql)
+      TRUE
+    }, error = function(e) {
+      showNotification(paste("DB update failed:", e$message),
+                       type = "error", duration = NULL)
+      FALSE
+    })
+  }
+  
   session$onSessionEnded(function() {
     con <- con_rv()
     if (!is.null(con) && DBI::dbIsValid(con)) DBI::dbDisconnect(con)
   })
-  
   
   
   logged_in <- reactiveVal(FALSE)
@@ -557,7 +580,7 @@ server <- function(input, output, session) {
         "last_episode = ", as.integer(e), ", ",
         "currently_watching = TRUE ",
         "WHERE id = ", as.integer(mid), " ",
-        "AND finished = 0"
+        "AND finished = FALSE"
       )
     )
   }
@@ -938,7 +961,7 @@ server <- function(input, output, session) {
         
         m <- movies[movies$id == mid, ]
         
-        new_val <- ifelse(m$favorite == 1, 0, 1)
+        new_val <- ifelse(isTRUE(m$favorite), "FALSE", "TRUE")
         
         db_exec(
           paste0(
@@ -1211,9 +1234,9 @@ server <- function(input, output, session) {
         db_exec(
           paste0(
             "UPDATE public.movies SET
-            finished = 1,
+            finished = TRUE,
             rating = ", rating, ",
-            currently_watching = 0,
+            currently_watching = FALSE,
             last_season = NULL,
             last_episode = NULL
            WHERE id = ", mid
@@ -1540,7 +1563,7 @@ server <- function(input, output, session) {
             db_exec(
               paste0(
                 "UPDATE public.movies SET
-         currently_watching = 1
+         currently_watching = TRUE
          WHERE id = ", mid
               )
             )
