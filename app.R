@@ -100,7 +100,16 @@ server <- function(input, output, session) {
   })
   
   
-  logged_in <- reactiveVal(FALSE) 
+  logged_in <- reactiveVal(FALSE)
+  
+  safe_nzchar <- function(x) {
+    !is.null(x) && length(x) == 1 && !is.na(x) && nzchar(trimws(x))
+  }
+  
+  as_safe_str <- function(x) {
+    if (is.null(x) || length(x) == 0 || is.na(x)) "" else as.character(x)
+  }
+  
   
   login_server(input, output, session, logged_in)
   output$app_page <- renderUI({
@@ -175,7 +184,7 @@ server <- function(input, output, session) {
     req(nrow(m) == 1)
     
     yt_id <- ""
-    if (nzchar(m$youtube_trailer)) {
+    if (safe_nzchar(m$youtube_trailer)) {
       yt_id <- sub(".*v=([^&]+).*", "\\1", m$youtube_trailer)
     }
     
@@ -227,7 +236,7 @@ server <- function(input, output, session) {
             )
           ),
           
-          if (nzchar(yt_id))
+          if (safe_nzchar(yt_id))
             div(
               class = "trailer-wrapper",
               tags$iframe(
@@ -923,15 +932,29 @@ server <- function(input, output, session) {
     current_detail_id(mid)
     
     # 🔥 PRELOAD TV DATA HERE (NOT IN MODAL)
-    if (m$type == "TV Show" && nzchar(m$video_path)) {
-      tv_data <- jsonlite::fromJSON(m$video_path, simplifyVector = FALSE)
+    if (m$type == "TV Show" && safe_nzchar(m$video_path)) {
+      tv_data <- tryCatch(
+        jsonlite::fromJSON(m$video_path, simplifyVector = FALSE),
+        error = function(e) {
+          showNotification(
+            paste("TV data JSON is invalid:", e$message),
+            type = "error",
+            duration = NULL
+          )
+          NULL
+        }
+      )
       current_tv_data(tv_data)
     } else {
       current_tv_data(NULL)
     }
     
     removeModal()
-    show_details_modal(mid)
+    tryCatch({
+      show_details_modal(mid)
+    }, error = function(e) {
+      showNotification(paste("Failed to open details:", e$message), type="error", duration=NULL)
+    })
     
   }, ignoreInit = TRUE)
   
