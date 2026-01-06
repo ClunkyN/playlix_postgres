@@ -118,8 +118,6 @@ server <- function(input, output, session) {
     if (!is.null(con) && DBI::dbIsValid(con)) DBI::dbDisconnect(con)
   })
   
-  # connect once at startup (but safe)
-  ensure_con()
   
   
   logged_in <- reactiveVal(FALSE)
@@ -148,6 +146,12 @@ server <- function(input, output, session) {
   db_exec <- function(sql) {
     con <- ensure_con()
     if (is.null(con)) return(invisible(FALSE))
+    
+    q <- function(x) {
+      con <- ensure_con()
+      if (is.null(con)) return("NULL")
+      DBI::dbQuoteString(con, x)
+    }
     
     tryCatch(
       { DBI::dbExecute(con, sql); TRUE },
@@ -1476,15 +1480,15 @@ server <- function(input, output, session) {
           
           db_exec(paste0(
             "UPDATE public.movies SET ",
-            "title=", dbQuoteString(con, input$edit_title), ",",
-            "year_released=", input$edit_year, ",",
-            "genre=", dbQuoteString(con, input$edit_genre), ",",
-            "type=", dbQuoteString(con, input$edit_type), ",",
-            "description=", dbQuoteString(con, input$edit_desc), ",",
-            "poster_path=", dbQuoteString(con, input$edit_poster), ",",
-            "video_path=", dbQuoteString(con, video_db), ",",
-            "youtube_trailer=", dbQuoteString(con, input$edit_trailer),
-            " WHERE id=", mid
+            "title=", q(input$edit_title), ",",
+            "year_released=", as.integer(input$edit_year), ",",
+            "genre=", q(input$edit_genre), ",",
+            "type=", q(input$edit_type), ",",
+            "description=", q(input$edit_desc), ",",
+            "poster_path=", q(input$edit_poster), ",",
+            "video_path=", q(video_db), ",",
+            "youtube_trailer=", q(input$edit_trailer),
+            " WHERE id=", as.integer(mid)
           ))
           
           removeModal()
@@ -1982,22 +1986,20 @@ server <- function(input, output, session) {
       video_db <- jsonlite::toJSON(seasons, auto_unbox = TRUE)
     }
     
-    db_exec(
-      paste0(
-        "INSERT INTO public.movies (title,year_released,genre,type,description,finished,rating,poster_path,video_path,youtube_trailer) VALUES(",
-        dbQuoteString(con, input$new_title), ",",
-        input$new_year, ",",
-        dbQuoteString(con, input$new_genre), ",",
-        dbQuoteString(con, input$new_type), ",",
-        dbQuoteString(con, input$new_desc), ",",
-        "0,",            # finished = FALSE by default
-        "NULL,",         # rating = NULL by default
-        dbQuoteString(con, input$poster_url), ",",
-        dbQuoteString(con, video_db), ",",
-        dbQuoteString(con, input$new_trailer),
-        ")"
-      )
-    )
+    db_exec(paste0(
+      "INSERT INTO public.movies (title,year_released,genre,type,description,finished,rating,poster_path,video_path,youtube_trailer) VALUES(",
+      q(input$new_title), ",",
+      as.integer(input$new_year), ",",
+      q(input$new_genre), ",",
+      q(input$new_type), ",",
+      q(input$new_desc), ",",
+      "0,",
+      "NULL,",
+      q(input$poster_url), ",",
+      q(video_db), ",",
+      q(input$new_trailer),
+      ")"
+    ))
     
     removeModal()
     refresh_trigger(refresh_trigger()+1)
