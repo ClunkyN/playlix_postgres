@@ -82,22 +82,44 @@ ui <- fluidPage(
 # ======================================================
 server <- function(input, output, session) {
   
+  # ---------- DB CONNECTION HOLDER ----------
+  con_rv <- reactiveVal(NULL)
   
-  con <- NULL
-  tryCatch({
-    con <- get_con()
-  }, error = function(e) {
-    # Keep the session alive and show an error
-    showNotification(
-      paste("DB connection failed:", e$message),
-      type = "error",
-      duration = NULL
-    )
-  })
+  connect_db <- function() {
+    # create a new connection
+    get_con()
+  }
   
+  ensure_con <- function() {
+    con <- con_rv()
+    
+    # if missing or invalid, reconnect
+    if (is.null(con) || !DBI::dbIsValid(con)) {
+      con <- tryCatch(
+        connect_db(),
+        error = function(e) {
+          showNotification(
+            paste("DB connection failed:", e$message),
+            type = "error",
+            duration = NULL
+          )
+          NULL
+        }
+      )
+      con_rv(con)
+    }
+    
+    con_rv()
+  }
+  
+  # disconnect cleanly
   session$onSessionEnded(function() {
-    if (!is.null(con)) DBI::dbDisconnect(con)
+    con <- con_rv()
+    if (!is.null(con) && DBI::dbIsValid(con)) DBI::dbDisconnect(con)
   })
+  
+  # connect once at startup (but safe)
+  ensure_con()
   
   
   logged_in <- reactiveVal(FALSE)
@@ -110,6 +132,31 @@ server <- function(input, output, session) {
     if (is.null(x) || length(x) == 0 || is.na(x)) "" else as.character(x)
   }
   
+  db_get <- function(sql) {
+    con <- ensure_con()
+    if (is.null(con)) return(data.frame())
+    
+    tryCatch(
+      DBI::dbGetQuery(con, sql),
+      error = function(e) {
+        showNotification(paste("DB query failed:", e$message), type = "error", duration = NULL)
+        data.frame()
+      }
+    )
+  }
+  
+  db_exec <- function(sql) {
+    con <- ensure_con()
+    if (is.null(con)) return(invisible(FALSE))
+    
+    tryCatch(
+      { DBI::dbExecute(con, sql); TRUE },
+      error = function(e) {
+        showNotification(paste("DB update failed:", e$message), type = "error", duration = NULL)
+        FALSE
+      }
+    )
+  }
   
   login_server(input, output, session, logged_in)
   output$app_page <- renderUI({
@@ -177,10 +224,8 @@ server <- function(input, output, session) {
   show_details_modal <- function(mid) {
     
     movies <- load_movies()
-    m <- dbGetQuery(
-      con,
-      paste0("SELECT * FROM movies WHERE id = ", mid)
-    )
+    m <- db_get(paste0("SELECT * FROM public.movies WHERE id = ", as.integer(mid)))
+    
     req(nrow(m) == 1)
     
     yt_id <- ""
@@ -342,22 +387,11 @@ server <- function(input, output, session) {
   
   load_movies <- reactive({
     req(logged_in())
-    req(!is.null(con))
     refresh_trigger()
     
-    out <- tryCatch(
-      dbGetQuery(con, "SELECT * FROM public.movies ORDER BY id DESC"),
-      error = function(e) {
-        showNotification(
-          paste("DB query failed:", e$message, " (Do you have public.movies?)"),
-          type = "error",
-          duration = NULL
-        )
-        data.frame()
-      }
-    )
-    out
+    db_get("SELECT * FROM public.movies ORDER BY id DESC")
   })
+  
   
   top_rated_server(input, output, session, load_movies)
   
@@ -512,10 +546,9 @@ server <- function(input, output, session) {
                                e   = current_episode_idx()) {
     if (is.null(mid) || is.null(s) || is.null(e)) return()
     
-    dbExecute(
-      con,
+    db_exec(
       paste0(
-        "UPDATE movies SET ",
+        "UPDATE public.movies SET ",
         "last_season = ", as.integer(s), ", ",
         "last_episode = ", as.integer(e), ", ",
         "currently_watching = 1 ",
@@ -588,10 +621,9 @@ server <- function(input, output, session) {
           
           
           
-          dbExecute(
-            con,
+          db_exec(
             paste0(
-              "UPDATE movies 
+              "UPDATE public.movies 
               SET finished = 1,
                 rating = ", rating, ",
                 currently_watching = 0
@@ -904,10 +936,9 @@ server <- function(input, output, session) {
         
         new_val <- ifelse(m$favorite == 1, 0, 1)
         
-        dbExecute(
-          con,
+        db_exec(
           paste0(
-            "UPDATE movies SET favorite = ",
+            "UPDATE public.movies SET favorite = ",
             new_val,
             " WHERE id = ",
             mid
@@ -1173,10 +1204,9 @@ server <- function(input, output, session) {
         rating <- as.numeric(input$detail_rating)
         rating_sql <- if (is.na(rating)) "NULL" else round(rating, 1)
         
-        dbExecute(
-          con,
+        db_exec(
           paste0(
-            "UPDATE movies SET
+            "UPDATE public.movies SET
             finished = 1,
             rating = ", rating, ",
             currently_watching = 0,
@@ -1188,10 +1218,8 @@ server <- function(input, output, session) {
         
       } else {
         
-        dbExecute(
-          con,
-          paste0(
-            "UPDATE movies 
+        db_exec(paste0(
+            "UPDATE public.movies 
            SET finished = 0,
                rating = NULL
            WHERE id = ", mid
@@ -1222,7 +1250,7 @@ server <- function(input, output, session) {
         
         observeEvent(input$confirm_delete_movie, {
           if (!allow_click(paste0("confirm_delete_", mid))) return()
-          dbExecute(con, paste0("DELETE FROM movies WHERE id = ", mid))
+          db_exec(paste0("DELETE FROM public.movies WHERE id = ", mid))
           removeModal()
           removeModal()
           refresh_trigger(refresh_trigger() + 1)
@@ -1446,8 +1474,8 @@ server <- function(input, output, session) {
             video_db <- jsonlite::toJSON(seasons, auto_unbox = TRUE)
           }
           
-          dbExecute(con, paste0(
-            "UPDATE movies SET ",
+          db_exec(paste0(
+            "UPDATE public.movies SET ",
             "title=", dbQuoteString(con, input$edit_title), ",",
             "year_released=", input$edit_year, ",",
             "genre=", dbQuoteString(con, input$edit_genre), ",",
@@ -1505,10 +1533,9 @@ server <- function(input, output, session) {
           
           # 🔒 DO NOT override finished movies
           if (!isTRUE(m$finished == 1)) {
-            dbExecute(
-              con,
+            db_exec(
               paste0(
-                "UPDATE movies SET
+                "UPDATE public.movies SET
          currently_watching = 1
          WHERE id = ", mid
               )
@@ -1955,10 +1982,9 @@ server <- function(input, output, session) {
       video_db <- jsonlite::toJSON(seasons, auto_unbox = TRUE)
     }
     
-    dbExecute(
-      con,
+    db_exec(
       paste0(
-        "INSERT INTO movies (title,year_released,genre,type,description,finished,rating,poster_path,video_path,youtube_trailer) VALUES(",
+        "INSERT INTO public.movies (title,year_released,genre,type,description,finished,rating,poster_path,video_path,youtube_trailer) VALUES(",
         dbQuoteString(con, input$new_title), ",",
         input$new_year, ",",
         dbQuoteString(con, input$new_genre), ",",
