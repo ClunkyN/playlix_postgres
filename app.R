@@ -83,8 +83,22 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   
   
-  con <- get_con()
-  session$onSessionEnded(function() DBI::dbDisconnect(con))
+  con <- NULL
+  tryCatch({
+    con <- get_con()
+  }, error = function(e) {
+    # Keep the session alive and show an error
+    showNotification(
+      paste("DB connection failed:", e$message),
+      type = "error",
+      duration = NULL
+    )
+  })
+  
+  session$onSessionEnded(function() {
+    if (!is.null(con)) DBI::dbDisconnect(con)
+  })
+  
   
   logged_in <- reactiveVal(FALSE) 
   
@@ -318,10 +332,24 @@ server <- function(input, output, session) {
   }
   
   load_movies <- reactive({
+    req(logged_in())
+    req(!is.null(con))
     refresh_trigger()
-    dbGetQuery(con,"SELECT * FROM movies ORDER BY id DESC")
     
+    out <- tryCatch(
+      dbGetQuery(con, "SELECT * FROM public.movies ORDER BY id DESC"),
+      error = function(e) {
+        showNotification(
+          paste("DB query failed:", e$message, " (Do you have public.movies?)"),
+          type = "error",
+          duration = NULL
+        )
+        data.frame()
+      }
+    )
+    out
   })
+  
   top_rated_server(input, output, session, load_movies)
   
   filtered_movies <- reactive({
