@@ -5,6 +5,8 @@ account: clunky
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 16378538
-bundleId: 11406621
+bundleId: 11406633
 url: https://clunky.shinyapps.io/playlix/
 version: 1
+asMultiple: FALSE
+asStatic: FALSE
