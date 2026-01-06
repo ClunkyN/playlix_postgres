@@ -4,7 +4,7 @@ options(shiny.maxRequestSize = 200 * 1024^2)
 library(shiny)
 library(shinyWidgets)
 library(DBI)
-library(RMySQL)
+library(RPostgres)
 library(jsonlite)
 
 source("login.R")
@@ -15,11 +15,12 @@ source("top_rated_page.R")
 # DATABASE CONNECTION
 # ======================================================
 con <- dbConnect(
-  RMySQL::MySQL(),
+  RPostgres::Postgres(),
   host = "localhost",
-  user = "root",
+  user = "postgres",
   password = "",
-  dbname = "movie_watchlist"
+  dbname = "movie_watchlist",
+  port = 5432
 )
 
 # ======================================================
