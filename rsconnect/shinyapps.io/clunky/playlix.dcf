@@ -1,0 +1,12 @@
+name: playlix
+title: playlix
+username: clunky
+account: clunky
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 16378538
+bundleId: 11406506
+url: https://clunky.shinyapps.io/playlix/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
