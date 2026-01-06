@@ -7,22 +7,27 @@ library(DBI)
 library(RPostgres)
 library(jsonlite)
 
+
+
 source("login.R")
 source("top_rated_page.R")
 
-
 # ======================================================
-# DATABASE CONNECTION
+# DATABASE CONFIG (SUPABASE)
 # ======================================================
-con <- dbConnect(
-  RPostgres::Postgres(),
-  host = "localhost",
-  user = "postgres",
-  password = "password123",
-  dbname = "movie_watchlist",
-  port = 5432
-)
+cfg <- jsonlite::fromJSON("config.json")
 
+get_con <- function() {
+  DBI::dbConnect(
+    RPostgres::Postgres(),
+    host     = cfg$host,
+    port     = as.integer(cfg$port),
+    dbname   = cfg$dbname,
+    user     = cfg$user,
+    password = cfg$password,
+    sslmode  = "require"
+  )
+}
 # ======================================================
 # UI
 # ======================================================
@@ -76,6 +81,10 @@ ui <- fluidPage(
 # SERVER
 # ======================================================
 server <- function(input, output, session) {
+  
+  
+  con <- get_con()
+  session$onSessionEnded(function() DBI::dbDisconnect(con))
   
   logged_in <- reactiveVal(FALSE) 
   
