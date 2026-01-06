@@ -555,7 +555,7 @@ server <- function(input, output, session) {
         "UPDATE public.movies SET ",
         "last_season = ", as.integer(s), ", ",
         "last_episode = ", as.integer(e), ", ",
-        "currently_watching = 1 ",
+        "currently_watching = TRUE ",
         "WHERE id = ", as.integer(mid), " ",
         "AND finished = 0"
       )
@@ -628,9 +628,9 @@ server <- function(input, output, session) {
           db_exec(
             paste0(
               "UPDATE public.movies 
-              SET finished = 1,
+              SET finished = TRUE,
                 rating = ", rating, ",
-                currently_watching = 0
+                currently_watching = FALSE
               WHERE id = ", mid
             )
           )
@@ -1224,7 +1224,7 @@ server <- function(input, output, session) {
         
         db_exec(paste0(
             "UPDATE public.movies 
-           SET finished = 0,
+           SET finished = FALSE,
                rating = NULL
            WHERE id = ", mid
           )
@@ -1993,7 +1993,7 @@ server <- function(input, output, session) {
       q(input$new_genre), ",",
       q(input$new_type), ",",
       q(input$new_desc), ",",
-      "0,",
+      "FALSE,",
       "NULL,",
       q(input$poster_url), ",",
       q(video_db), ",",
