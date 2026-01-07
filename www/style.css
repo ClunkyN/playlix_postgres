@@ -1075,4 +1075,99 @@ html, body {
   width: 100% !important;
 }
 
+/* ================= STAR THUMB SLIDER (LIKE IMAGE) =================
+   - 0–10 slider (decimal)
+   - Blue fill + gray remainder
+   - Yellow star thumb
+   - No extra stars row / no number
+================================================================== */
 
+.star-slider-wrap {
+  margin-top: 10px;
+}
+
+/* the range itself */
+.star-slider-wrap input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+
+  width: 100%;
+  height: 18px;
+  border-radius: 999px;
+  outline: none;
+
+  /* the magic: fill controlled by --fill (0% to 100%) */
+  background: linear-gradient(
+    to right,
+    #3b82f6 0%,
+    #3b82f6 var(--fill, 0%),
+    #e5e7eb var(--fill, 0%),
+    #e5e7eb 100%
+  );
+
+  border: none;
+}
+
+/* track (webkit) */
+.star-slider-wrap input[type="range"]::-webkit-slider-runnable-track {
+  height: 18px;
+  border-radius: 999px;
+  background: transparent; /* we use the main background above */
+}
+
+/* thumb (webkit) — yellow star */
+.star-slider-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+
+  width: 52px;
+  height: 52px;
+  margin-top: -17px; /* centers thumb on 18px track */
+
+  background: center / contain no-repeat url("data:image/svg+xml;utf8,\
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>\
+<path fill='%23FFD400' stroke='%23FFD400' stroke-width='0.6' d='M12 2.2l2.9 6.2 6.8.6-5.1 4.4 1.6 6.6L12 16.9 5.8 20l1.6-6.6L2.3 9l6.8-.6L12 2.2z'/>\
+</svg>");
+
+  border: none;
+  border-radius: 0;
+
+  filter: drop-shadow(0 6px 10px rgba(0,0,0,0.45));
+  cursor: pointer;
+}
+
+/* track (Firefox) */
+.star-slider-wrap input[type="range"]::-moz-range-track {
+  height: 18px;
+  border-radius: 999px;
+  background: #e5e7eb;
+}
+
+/* fill (Firefox) */
+.star-slider-wrap input[type="range"]::-moz-range-progress {
+  height: 18px;
+  border-radius: 999px;
+  background: #3b82f6;
+}
+
+/* thumb (Firefox) — yellow star */
+.star-slider-wrap input[type="range"]::-moz-range-thumb {
+  width: 52px;
+  height: 52px;
+
+  background: center / contain no-repeat url("data:image/svg+xml;utf8,\
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>\
+<path fill='%23FFD400' stroke='%23FFD400' stroke-width='0.6' d='M12 2.2l2.9 6.2 6.8.6-5.1 4.4 1.6 6.6L12 16.9 5.8 20l1.6-6.6L2.3 9l6.8-.6L12 2.2z'/>\
+</svg>");
+
+  border: none;
+  border-radius: 0;
+
+  filter: drop-shadow(0 6px 10px rgba(0,0,0,0.45));
+  cursor: pointer;
+}
+
+/* remove focus outline but keep subtle glow */
+.star-slider-wrap input[type="range"]:focus {
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.25);
+}

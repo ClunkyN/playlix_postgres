@@ -21,14 +21,14 @@ source("top_rated_page.R")
 # ✅ SWITCH HERE:
 # TRUE  = use LOCAL Postgres (RStudio / your PC)
 # FALSE = use SUPABASE / DEPLOY Postgres (config.json)
-USE_LOCAL_DB <- FALSE
+USE_LOCAL_DB <- TRUE
 
 # ---------------- LOCAL POSTGRES (DEV) ----------------
 # Change these to match your local pgAdmin/Postgres setup
 local_cfg <- list(
   host     = "localhost",
   port     = 5432,
-  dbname   = "movie_Watchlist",   # <-- change if your local DB name is different
+  dbname   = "movie_watchlist",   # <-- change if your local DB name is different
   user     = "postgres",     # <-- change if your local user is different
   password = "password123",  # <-- put your local password
   sslmode  = "disable"
@@ -263,6 +263,22 @@ server <- function(input, output, session) {
     TRUE
   }
   
+  #====star=====
+  star_slider <- function(inputId, label, value = 0, min = 0, max = 10, step = 0.1) {
+    div(
+      class = "star-slider-wrap",
+      tags$label(label, style="display:block; margin-bottom:6px;"),
+      tagAppendAttributes(
+        sliderInput(
+          inputId, label = NULL,
+          min = min, max = max, value = value, step = step
+        ),
+        class = "star-slider-input"
+      )
+    )
+  }
+  
+  
   # ================= PAGINATION =================
   items_per_page <- 15
   current_page <- reactiveVal(1)
@@ -375,18 +391,14 @@ server <- function(input, output, session) {
           
           conditionalPanel(
             condition = "input.detail_finished == true",
-            numericInput(
+            star_slider(
               "detail_rating",
               "Your Rating (0 – 10)",
               value = ifelse(is.na(m$rating), 0, m$rating),
               min = 0,
               max = 10,
               step = 0.1
-            ) |>
-              tagAppendAttributes(
-                readonly = "readonly",
-                onkeydown = "return false;"
-              )          ),
+            )         ),
           
           div(
             style = "margin-top:30px; display:flex; gap:10px;",
@@ -660,7 +672,7 @@ server <- function(input, output, session) {
           title = "Rate This Title",
           easyClose = TRUE,
           
-          numericInput(
+          star_slider(
             "rating_input",
             "Your Rating (0 – 10)",
             value = 8.0,

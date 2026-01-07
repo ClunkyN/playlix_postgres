@@ -184,3 +184,57 @@ $(document).on("shiny:recalculated", function () {
   document.body.style.overflowX = "hidden";
   document.documentElement.style.overflowX = "hidden";
 });
+
+/* ================= STAR THUMB SLIDER FILL (LIKE IMAGE) =================
+   - Updates CSS var --fill so the track becomes:
+     blue (0..value) + gray (value..10)
+   - Works for any slider inside .star-slider-wrap
+============================================================================= */
+(function () {
+  function setFill(rangeEl) {
+    if (!rangeEl) return;
+    const min = parseFloat(rangeEl.min || "0");
+    const max = parseFloat(rangeEl.max || "10");
+    const val = parseFloat(rangeEl.value || "0");
+    const pct = ((val - min) / (max - min)) * 100;
+    rangeEl.style.setProperty("--fill", pct + "%");
+  }
+
+  function scanAll() {
+    document
+      .querySelectorAll(".star-slider-wrap input[type='range']")
+      .forEach(setFill);
+  }
+
+  // live update while sliding
+  document.addEventListener(
+    "input",
+    function (e) {
+      if (e.target && e.target.matches(".star-slider-wrap input[type='range']")) {
+        setFill(e.target);
+      }
+    },
+    true
+  );
+
+  document.addEventListener(
+    "change",
+    function (e) {
+      if (e.target && e.target.matches(".star-slider-wrap input[type='range']")) {
+        setFill(e.target);
+      }
+    },
+    true
+  );
+
+  // after Shiny renders / modals open
+  setTimeout(scanAll, 200);
+
+  document.addEventListener("shiny:recalculated", function () {
+    setTimeout(scanAll, 50);
+  });
+
+  document.addEventListener("shown.bs.modal", function () {
+    setTimeout(scanAll, 50);
+  });
+})();
