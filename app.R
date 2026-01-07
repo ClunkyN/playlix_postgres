@@ -13,12 +13,50 @@ source("login.R")
 source("top_rated_page.R")
 
 # ======================================================
-# DATABASE CONFIG (SUPABASE)
+# DATABASE CONFIG
+# - Local Postgres for development (no shinyapps hours)
+# - Supabase/Postgres for deployment
 # ======================================================
+
+# ✅ SWITCH HERE:
+# TRUE  = use LOCAL Postgres (RStudio / your PC)
+# FALSE = use SUPABASE / DEPLOY Postgres (config.json)
+USE_LOCAL_DB <- FALSE
+
+# ---------------- LOCAL POSTGRES (DEV) ----------------
+# Change these to match your local pgAdmin/Postgres setup
+local_cfg <- list(
+  host     = "localhost",
+  port     = 5432,
+  dbname   = "movie_Watchlist",   # <-- change if your local DB name is different
+  user     = "postgres",     # <-- change if your local user is different
+  password = "password123",  # <-- put your local password
+  sslmode  = "disable"
+)
+
+# ---------------- SUPABASE POSTGRES (DEPLOY) ----------------
+# ⚠️ This is what you use when you deploy (shinyapps / online testing)
+# Reads credentials from config.json (keep this file OUT of GitHub if it has secrets)
 cfg <- jsonlite::fromJSON("config.json")
 
+# ---------------- SINGLE CONNECTOR FUNCTION ----------------
 get_con <- function() {
-  DBI::dbConnect(
+  
+  if (isTRUE(USE_LOCAL_DB)) {
+    # ✅ LOCAL connection (fast dev)
+    return(DBI::dbConnect(
+      RPostgres::Postgres(),
+      host     = local_cfg$host,
+      port     = as.integer(local_cfg$port),
+      dbname   = local_cfg$dbname,
+      user     = local_cfg$user,
+      password = local_cfg$password,
+      sslmode  = local_cfg$sslmode
+    ))
+  }
+  
+  # ✅ DEPLOY connection (Supabase / cloud)
+  return(DBI::dbConnect(
     RPostgres::Postgres(),
     host     = cfg$host,
     port     = as.integer(cfg$port),
@@ -26,8 +64,9 @@ get_con <- function() {
     user     = cfg$user,
     password = cfg$password,
     sslmode  = "require"
-  )
+  ))
 }
+
 # ======================================================
 # UI
 # ======================================================
