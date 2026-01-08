@@ -1206,6 +1206,17 @@ server <- function(input, output, session) {
   output$poster_grid <- renderUI({
     
     movies <- paginated_movies()
+    
+    # Show loading state if no movies yet
+    if (nrow(movies) == 0) {
+      return(div(class = "grid-loading",
+        div(
+          div(class = "spinner"),
+          div(class = "spinner-text", "Loading posters...")
+        )
+      ))
+    }
+    
     div(class="movie-grid",
         lapply(seq_len(nrow(movies)), function(i){
           m <- movies[i,]
