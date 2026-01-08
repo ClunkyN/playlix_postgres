@@ -4,11 +4,11 @@ Shiny.addCustomMessageHandler("pageView", function (v) {
   Shiny.setInputValue("current_page_view", v, { priority: "event" });
 });
 
-/* ================= GLOBAL CLICK LOCK (PREVENT DOUBLE CLICK) =================
-   - Locks only important action buttons so one click = one input.
-   - DOES NOT lock episode panel toggles (so Select Ep can open/close normally).
-   - Auto-unlocks if Shiny re-renders the UI or if button disappears.
-============================================================================= */
+Shiny.addCustomMessageHandler("scrollGrid", function (v) {
+  scrollGridToTop();
+});
+
+/* ================= GLOBAL CLICK LOCK (PREVENT DOUBLE CLICK) ================= */
 (function () {
   const LOCK_MS = 800;
 
@@ -238,3 +238,14 @@ $(document).on("shiny:recalculated", function () {
     setTimeout(scanAll, 50);
   });
 })();
+
+/* ================= SCROLL GRID TO TOP ================= */
+function scrollGridToTop() {
+  const grid = document.querySelector(".movie-grid");
+  if (grid) {
+    grid.scrollIntoView({ behavior: "smooth", block: "start" });
+    setTimeout(() => {
+      window.scrollBy({ top: -100, behavior: "smooth" });
+    }, 100);
+  }
+}

@@ -1084,11 +1084,13 @@ server <- function(input, output, session) {
   
   observeEvent(input$prev_page, {
     current_page(max(1, current_page() - 1))
+    session$sendCustomMessage("scrollGrid", list())
   })
   
   observeEvent(input$next_page, {
     total_pages <- ceiling(nrow(filtered_movies()) / items_per_page)
     current_page(min(total_pages, current_page() + 1))
+    session$sendCustomMessage("scrollGrid", list())
   })
   
   output$page_content <- renderUI({
