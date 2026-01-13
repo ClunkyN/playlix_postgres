@@ -1488,12 +1488,43 @@ server <- function(input, output, session) {
   observe({
     movies <- load_movies()
     
+    # Store editing context
+    edit_context <- reactiveValues(
+      movie_id = NULL,
+      original_edit = NULL
+    )
+    
     lapply(movies$id, function(mid){
       observeEvent(input[[paste0("edit_movie_", mid)]], {
         
         m <- movies[movies$id == mid, ]
         
         removeModal()  # close Details modal first
+        
+        # Store the current editing movie ID
+        edit_context$movie_id <- mid
+        
+        # 📌 STORE ORIGINAL VALUES
+        edit_context$original_edit <- reactiveValues(
+          title  = m$title,
+          year   = m$year_released,
+          genre  = m$genre,
+          type   = m$type,
+          desc   = m$description,
+          poster = m$poster_path,
+          trailer= m$youtube_trailer
+        )
+        
+        is_tv <- m$type == "TV Show"
+        tv_data <- NULL
+        if (isTRUE(is_tv) &&
+            !is.null(m$video_path) &&
+            nzchar(trimws(m$video_path))) {
+          tv_data <- tryCatch(
+            jsonlite::fromJSON(m$video_path, simplifyVector = FALSE),
+            error = function(e) NULL
+          )
+        }
         
         showModal(
           modalDialog(
@@ -1534,38 +1565,15 @@ server <- function(input, output, session) {
           )
         )
         
-        
-        # 📌 STORE ORIGINAL VALUES
-        original_edit <- reactiveValues(
-          title  = m$title,
-          year   = m$year_released,
-          genre  = m$genre,
-          type   = m$type,
-          desc   = m$description,
-          poster = m$poster_path,
-          trailer= m$youtube_trailer
-        )
-        
         edit_changed <- reactive({
-          trimws(input$edit_title)  != trimws(original_edit$title)  ||
-            input$edit_year           != original_edit$year           ||
-            trimws(input$edit_genre)  != trimws(original_edit$genre)  ||
-            input$edit_type           != original_edit$type           ||
-            trimws(input$edit_desc)   != trimws(original_edit$desc)   ||
-            trimws(input$edit_poster) != trimws(original_edit$poster) ||
-            trimws(input$edit_trailer)!= trimws(original_edit$trailer)
+          trimws(input$edit_title)  != trimws(edit_context$original_edit$title)  ||
+            input$edit_year           != edit_context$original_edit$year           ||
+            trimws(input$edit_genre)  != trimws(edit_context$original_edit$genre)  ||
+            input$edit_type           != edit_context$original_edit$type           ||
+            trimws(input$edit_desc)   != trimws(edit_context$original_edit$desc)   ||
+            trimws(input$edit_poster) != trimws(edit_context$original_edit$poster) ||
+            trimws(input$edit_trailer)!= trimws(edit_context$original_edit$trailer)
         })
-        
-        is_tv <- m$type == "TV Show"
-        tv_data <- NULL
-        if (isTRUE(is_tv) &&
-            !is.null(m$video_path) &&
-            nzchar(trimws(m$video_path))) {
-          tv_data <- tryCatch(
-            jsonlite::fromJSON(m$video_path, simplifyVector = FALSE),
-            error = function(e) NULL
-          )
-        }
         
         output$edit_save_btn <- renderUI({
           if (edit_changed()) {
@@ -1582,7 +1590,6 @@ server <- function(input, output, session) {
             )
           }
         })
-        
         
         output$edit_poster_preview <- renderUI({
           req(input$edit_poster)
@@ -1667,57 +1674,70 @@ server <- function(input, output, session) {
           }
         })
         
-        observeEvent(input$save_edit_movie_full, {
-          
-          # 🚫 STOP IF NOTHING CHANGED
-          if (!edit_changed()) return()
-          
-          # 🚫 BLOCK SAVE IF TITLE EMPTY
-          if (!nzchar(trimws(input$edit_title))) return()
-          
-          video_db <- NULL
-          
-          if (input$edit_type == "Movie") {
-            video_db <- input$edit_movie_url
-          }
-          
-          if (input$edit_type == "TV Show") {
-            seasons <- list()
-            for (s in seq_len(input$edit_season_count)) {
-              eps <- list()
-              ep_n <- input[[paste0("edit_season_", s, "_episodes")]]
-              for (e in seq_len(ep_n)) {
-                eps[[e]] <- list(
-                  title = input[[paste0("edit_s", s, "_e", e, "_title")]],
-                  url   = input[[paste0("edit_s", s, "_e", e, "_url")]]
-                )
-              }
-              seasons[[s]] <- list(season = s, episodes = eps)
-            }
-            video_db <- jsonlite::toJSON(seasons, auto_unbox = TRUE)
-          }
-          
-          db_exec(paste0(
-            "UPDATE public.movies SET ",
-            "title=", q(input$edit_title), ",",
-            "year_released=", as.integer(input$edit_year), ",",
-            "genre=", q(input$edit_genre), ",",
-            "type=", q(input$edit_type), ",",
-            "description=", q(input$edit_desc), ",",
-            "poster_path=", q(input$edit_poster), ",",
-            "video_path=", q(video_db), ",",
-            "youtube_trailer=", q(input$edit_trailer),
-            " WHERE id=", as.integer(mid)
-          ))
-          
-          removeModal()
-          refresh_trigger(refresh_trigger() + 1)
-          showNotification("Updated successfully", type = "message")
-          
-        })
-        
-        
       }, ignoreInit = TRUE)
+    })
+    
+    observeEvent(input$save_edit_movie_full, {
+      
+      req(edit_context$movie_id)
+      mid <- edit_context$movie_id
+      
+      # Check if any changes were made
+      has_changes <- (
+        trimws(input$edit_title)  != trimws(edit_context$original_edit$title)  ||
+        input$edit_year           != edit_context$original_edit$year           ||
+        trimws(input$edit_genre)  != trimws(edit_context$original_edit$genre)  ||
+        input$edit_type           != edit_context$original_edit$type           ||
+        trimws(input$edit_desc)   != trimws(edit_context$original_edit$desc)   ||
+        trimws(input$edit_poster) != trimws(edit_context$original_edit$poster) ||
+        trimws(input$edit_trailer)!= trimws(edit_context$original_edit$trailer)
+      )
+      
+      # 🚫 STOP IF NOTHING CHANGED
+      if (!has_changes) return()
+      
+      # 🚫 BLOCK SAVE IF TITLE EMPTY
+      if (!nzchar(trimws(input$edit_title))) return()
+      
+      video_db <- NULL
+      
+      if (input$edit_type == "Movie") {
+        video_db <- input$edit_movie_url
+      }
+      
+      if (input$edit_type == "TV Show") {
+        seasons <- list()
+        for (s in seq_len(input$edit_season_count)) {
+          eps <- list()
+          ep_n <- input[[paste0("edit_season_", s, "_episodes")]]
+          for (e in seq_len(ep_n)) {
+            eps[[e]] <- list(
+              title = input[[paste0("edit_s", s, "_e", e, "_title")]],
+              url   = input[[paste0("edit_s", s, "_e", e, "_url")]]
+            )
+          }
+          seasons[[s]] <- list(season = s, episodes = eps)
+        }
+        video_db <- jsonlite::toJSON(seasons, auto_unbox = TRUE)
+      }
+      
+      db_exec(paste0(
+        "UPDATE public.movies SET ",
+        "title=", q(input$edit_title), ",",
+        "year_released=", as.integer(input$edit_year), ",",
+        "genre=", q(input$edit_genre), ",",
+        "type=", q(input$edit_type), ",",
+        "description=", q(input$edit_desc), ",",
+        "poster_path=", q(input$edit_poster), ",",
+        "video_path=", q(video_db), ",",
+        "youtube_trailer=", q(input$edit_trailer),
+        " WHERE id=", as.integer(mid)
+      ))
+      
+      removeModal()
+      refresh_trigger(refresh_trigger() + 1)
+      showNotification("Updated successfully", type = "message")
+      
     })
   })
   
