@@ -21,7 +21,7 @@ source("top_rated_page.R")
 # ✅ SWITCH HERE:
 # TRUE  = use LOCAL Postgres (RStudio / your PC)
 # FALSE = use SUPABASE / DEPLOY Postgres (config.json)
-USE_LOCAL_DB <- TRUE
+USE_LOCAL_DB <- FALSE
 
 # ---------------- LOCAL POSTGRES (DEV) ----------------
 # Change these to match your local pgAdmin/Postgres setup
@@ -1714,7 +1714,7 @@ server <- function(input, output, session) {
           refresh_trigger(refresh_trigger() + 1)
           showNotification("Updated successfully", type = "message")
           
-        }, once = TRUE)
+        })
         
         
       }, ignoreInit = TRUE)
