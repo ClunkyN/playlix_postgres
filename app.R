@@ -453,9 +453,52 @@ server <- function(input, output, session) {
     )
   }
   
+  # 🎬 Helper function to filter episodes with valid URLs
+  filter_available_episodes <- function(episodes) {
+    Filter(function(ep) {
+      !is.null(ep$url) && nzchar(trimws(ep$url))
+    }, episodes)
+  }
+  
   show_select_episode_modal <- function(m, tv_data) {
     
     current_tv_data(tv_data)
+    
+    # 🎬 Filter episodes with valid URLs
+    filtered_seasons <- lapply(tv_data, function(season) {
+      season$episodes <- filter_available_episodes(season$episodes)
+      season
+    })
+    
+    # Check if any episodes have links
+    has_episodes <- any(sapply(filtered_seasons, function(s) length(s$episodes) > 0))
+    
+    if (!has_episodes) {
+      showNotification(
+        "❌ No episodes available with video links",
+        type = "warning",
+        duration = NULL
+      )
+      return()
+    }
+    
+    # Find first season with episodes
+    season_ep_counts <- sapply(filtered_seasons, function(s) length(s$episodes))
+    first_season_idx <- which.max(season_ep_counts)
+    first_season <- filtered_seasons[[first_season_idx]]
+    
+    # Build season choices with episode counts
+    season_choices <- setNames(
+      seq_along(filtered_seasons),
+      sapply(seq_along(filtered_seasons), function(i) {
+        ep_count <- season_ep_counts[i]
+        if (ep_count > 0) {
+          paste0("Season ", i, " (", ep_count, " episodes)")
+        } else {
+          paste0("Season ", i, " (no episodes)")
+        }
+      })
+    )
     
     showModal(modalDialog(
       title = paste("Select Episode –", m$title),
@@ -465,16 +508,16 @@ server <- function(input, output, session) {
       selectInput(
         "tv_season_select",
         "Season",
-        choices = seq_along(tv_data),
-        selected = 1
+        choices = season_choices,
+        selected = first_season_idx
       ),
       
       selectInput(
         "tv_episode_select",
         "Episode",
         choices = setNames(
-          seq_along(tv_data[[1]]$episodes),
-          sapply(tv_data[[1]]$episodes, function(e) e$title)
+          seq_along(first_season$episodes),
+          sapply(first_season$episodes, function(e) e$title)
         ),
         selected = 1
       ),
@@ -881,7 +924,9 @@ server <- function(input, output, session) {
     req(input$modal_season_select, current_tv_data())
 
     s <- as.numeric(input$modal_season_select)
-    episodes <- current_tv_data()[[s]]$episodes
+    
+    # Filter episodes with valid URLs
+    episodes <- filter_available_episodes(current_tv_data()[[s]]$episodes)
 
     selectInput(
       "modal_episode_select",
@@ -909,7 +954,11 @@ server <- function(input, output, session) {
     s <- as.numeric(input$modal_season_select)
     e <- as.numeric(input$modal_episode_select)
     
-    ep <- current_tv_data()[[s]]$episodes[[e]]
+    # Filter episodes and get the selected one
+    available_episodes <- filter_available_episodes(current_tv_data()[[s]]$episodes)
+    
+    if (e > length(available_episodes)) return()
+    ep <- available_episodes[[e]]
     
     current_season_idx(s)
     current_episode_idx(e)
@@ -944,12 +993,15 @@ server <- function(input, output, session) {
     
     s <- as.numeric(input$tv_season_select)
     
+    # Filter episodes with valid URLs
+    available_episodes <- filter_available_episodes(tv[[s]]$episodes)
+    
     updateSelectInput(
       session,
       "tv_episode_select",
       choices = setNames(
-        seq_along(tv[[s]]$episodes),
-        sapply(tv[[s]]$episodes, function(e) e$title)
+        seq_along(available_episodes),
+        sapply(available_episodes, function(e) e$title)
       ),
       selected = 1
     )
@@ -972,7 +1024,13 @@ server <- function(input, output, session) {
     e <- as.numeric(input$tv_episode_select)
     
     tv <- current_tv_data()
-    ep <- tv[[s]]$episodes[[e]]
+    
+    # Get filtered episodes for this season
+    available_episodes <- filter_available_episodes(tv[[s]]$episodes)
+    
+    # Get the selected episode from filtered list
+    if (e > length(available_episodes)) return()
+    ep <- available_episodes[[e]]
     
     # ✅ Update reactive state
     current_season_idx(s)
@@ -1029,7 +1087,11 @@ server <- function(input, output, session) {
     s <- as.numeric(input$panel_season_select)
     e <- as.numeric(input$panel_episode_select)
     
-    ep <- current_tv_data()[[s]]$episodes[[e]]
+    # Get filtered episodes for this season
+    available_episodes <- filter_available_episodes(current_tv_data()[[s]]$episodes)
+    
+    if (e > length(available_episodes)) return()
+    ep <- available_episodes[[e]]
     
     current_season_idx(s)
     current_episode_idx(e)
@@ -1931,9 +1993,9 @@ server <- function(input, output, session) {
             "panel_episode_select",
             "Episode",
             choices = setNames(
-              seq_along(current_tv_data()[[current_season_idx()]]$episodes),
+              seq_along(filter_available_episodes(current_tv_data()[[current_season_idx()]]$episodes)),
               sapply(
-                current_tv_data()[[current_season_idx()]]$episodes,
+                filter_available_episodes(current_tv_data()[[current_season_idx()]]$episodes),
                 function(e) e$title
               )
             ),
