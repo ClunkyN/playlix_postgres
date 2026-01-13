@@ -8,6 +8,38 @@ Shiny.addCustomMessageHandler("scrollGrid", function (v) {
   scrollGridToTop();
 });
 
+/* ================= VIDEO PLAYBACK TRACKING ================= */
+(function() {
+  let lastUpdateTime = 0;
+  const UPDATE_INTERVAL_MS = 5000; // Update every 5 seconds
+  
+  document.addEventListener('timeupdate', function(e) {
+    if (e.target && e.target.tagName === 'VIDEO') {
+      const now = Date.now();
+      // Only send update if enough time has passed
+      if (now - lastUpdateTime >= UPDATE_INTERVAL_MS) {
+        lastUpdateTime = now;
+        // Send current time to Shiny
+        Shiny.setInputValue("video_current_time", {
+          timestamp: now,
+          currentTime: e.target.currentTime
+        }, { priority: "event" });
+      }
+    }
+  }, true);
+})();
+
+/* ================= VIDEO ENDED HANDLER ================= */
+(function() {
+  // Watch for video ended event and notify Shiny
+  document.addEventListener('ended', function(e) {
+    if (e.target && e.target.tagName === 'VIDEO') {
+      // Trigger Shiny input to notify server that video finished
+      Shiny.setInputValue("tv_episode_ended", Math.random(), { priority: "event" });
+    }
+  }, true);
+})();
+
 /* ================= GLOBAL CLICK LOCK (PREVENT DOUBLE CLICK) ================= */
 (function () {
   const LOCK_MS = 800;

@@ -667,6 +667,18 @@ server <- function(input, output, session) {
     )
   }
   
+  # 🔄 AUTO-SAVE PROGRESS EVERY FEW SECONDS WHILE WATCHING
+  observeEvent(input$video_current_time, {
+    req(current_playing_id(), current_season_idx(), current_episode_idx())
+    
+    # Save progress to database every time we get an update
+    save_tv_progress(
+      current_playing_id(),
+      current_season_idx(),
+      current_episode_idx()
+    )
+  }, ignoreInit = TRUE)
+  
   observe({
     session$onSessionEnded(function() {
       current_detail_id(NULL)
@@ -816,33 +828,61 @@ server <- function(input, output, session) {
       title = ep$title,
       url   = ep$url
     ))
+    
+    # Set first episode of season
+    current_episode_idx(1)
+    # Save progress to database
+    save_tv_progress()
   })
   
   # 🔄 Change episode inside player
   observeEvent(input$player_episode_select, {
     req(current_tv_data(), current_season_idx())
-    
+
     e <- as.numeric(input$player_episode_select)
-    
+
     current_episode_idx(e)
-    
+
     ep <- current_tv_data()[[current_season_idx()]]$episodes[[e]]
-    
+
     selected_episode(list(
       title = ep$title,
       url   = ep$url
     ))
+    
+    # Save progress to database
+    save_tv_progress()
   })
-  
+
+  # 🎬 VIDEO ENDED - SHOW CHOOSE EPISODE MODAL
+  observeEvent(input$tv_episode_ended, {
+    req(current_tv_data())
+    
+    mid <- current_detail_id()
+    if (is.null(mid)) return()
+    
+    m <- db_get(paste0("SELECT * FROM public.movies WHERE id = ", as.integer(mid)))
+    if (nrow(m) == 0) return()
+    
+    # Close player and reset all state
+    player_open(FALSE)
+    current_player(NULL)
+    selected_episode(NULL)
+    resuming_tv(FALSE)
+    
+    # Show the choose episode modal
+    show_select_episode_modal(m, current_tv_data())
+    
+  }, ignoreInit = TRUE)
   
   
   # 🎬 UPDATE EPISODE LIST WHEN SEASON CHANGES
   output$modal_episode_select_ui <- renderUI({
     req(input$modal_season_select, current_tv_data())
-    
+
     s <- as.numeric(input$modal_season_select)
     episodes <- current_tv_data()[[s]]$episodes
-    
+
     selectInput(
       "modal_episode_select",
       "Episode",
@@ -1021,13 +1061,12 @@ server <- function(input, output, session) {
     req(play_request())
     pr <- play_request()
     
-    # 🚫 NEVER auto-open TV player here
-    if (pr$type == "tv" && isTRUE(resuming_tv())) {
-      return()
-    }
-    
     if (pr$type == "movie") {
       current_player(pr$data)
+    } else if (pr$type == "tv") {
+      # For TV shows, we don't set current_player, 
+      # the selected_episode is enough to trigger player overlay
+      # resuming_tv flag prevents season/episode auto-reset in player controls
     }
     
   }, ignoreInit = TRUE)
@@ -1632,7 +1671,9 @@ server <- function(input, output, session) {
         
         if (!allow_click(paste0("play_movie_", mid))) return()
         
-        m <- movies[movies$id == mid, ]
+        # 🔄 FETCH FRESH DATA FROM DB (not cached version)
+        fresh_movies <- db_get("SELECT * FROM public.movies ORDER BY id DESC")
+        m <- fresh_movies[fresh_movies$id == mid, ]
         
         current_detail_id(mid)
         current_playing_id(mid) 
@@ -1698,8 +1739,11 @@ server <- function(input, output, session) {
           return()
         }
         
-        # 🔵 HAS PROGRESS → ALWAYS ASK CONTINUE
+        # 🔵 HAS PROGRESS → SHOW CONTINUE WATCHING DIALOG
         if (!is.na(m$last_season) && !is.na(m$last_episode)) {
+          
+          # Set tv_data before showing modal
+          current_tv_data(tv_data)
           
           showModal(modalDialog(
             title = "Continue Watching?",
@@ -1931,6 +1975,7 @@ server <- function(input, output, session) {
     current_season_idx(NULL)
     current_episode_idx(NULL)
     current_playing_id(NULL)
+    resuming_tv(FALSE)
     
     # ✅ TV-only refresh (movies won't trigger this)
     if (was_tv) {
