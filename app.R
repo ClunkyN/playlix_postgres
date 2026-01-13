@@ -21,7 +21,7 @@ source("top_rated_page.R")
 # ✅ SWITCH HERE:
 # TRUE  = use LOCAL Postgres (RStudio / your PC)
 # FALSE = use SUPABASE / DEPLOY Postgres (config.json)
-USE_LOCAL_DB <- FALSE
+USE_LOCAL_DB <- TRUE
 
 # ---------------- LOCAL POSTGRES (DEV) ----------------
 # Change these to match your local pgAdmin/Postgres setup
@@ -113,6 +113,22 @@ main_ui <- fluidPage(
   uiOutput("player_overlay")
 )
 ui <- fluidPage(
+  tags$head(
+    tags$script(HTML("
+      // Check if user is logged in (stored in sessionStorage)
+      window.isLoggedIn = function() {
+        return sessionStorage.getItem('playlix_logged_in') === 'true';
+      };
+      
+      window.setLoggedIn = function(value) {
+        if (value) {
+          sessionStorage.setItem('playlix_logged_in', 'true');
+        } else {
+          sessionStorage.removeItem('playlix_logged_in');
+        }
+      };
+    "))
+  ),
   uiOutput("app_page")
 )
 
@@ -225,6 +241,19 @@ server <- function(input, output, session) {
   }
   
   login_server(input, output, session, logged_in)
+  
+  # Restore login state from sessionStorage on app initialization
+  session$onFlush(function() {
+    session$sendCustomMessage("checkLoginState", list())
+  }, once = TRUE)
+  
+  # Listen for login state from JavaScript
+  observeEvent(input$restore_login_state, {
+    if (isTRUE(input$restore_login_state)) {
+      logged_in(TRUE)
+    }
+  })
+  
   output$app_page <- renderUI({
     if (logged_in()) {
       main_ui
@@ -606,6 +635,8 @@ server <- function(input, output, session) {
     
     
     logged_in(FALSE)
+    # Clear login state from sessionStorage
+    session$sendCustomMessage("clearLoginState", list())
     
     showNotification("Logged out successfully", type = "message")
   })

@@ -176,6 +176,29 @@ login_ui <- tagList(
 # =========================
 login_server <- function(input, output, session, logged_in) {
   
+  # Add JavaScript to handle login state persistence
+  insertUI(
+    selector = "body",
+    where = "beforeEnd",
+    ui = tags$script(HTML("
+      Shiny.addCustomMessageHandler('checkLoginState', function(msg) {
+        // Check if already logged in from sessionStorage
+        if (sessionStorage.getItem('playlix_logged_in') === 'true') {
+          Shiny.setInputValue('restore_login_state', true);
+        }
+      });
+      
+      Shiny.addCustomMessageHandler('setLoggedIn', function(msg) {
+        sessionStorage.setItem('playlix_logged_in', 'true');
+      });
+      
+      Shiny.addCustomMessageHandler('clearLoginState', function(msg) {
+        sessionStorage.removeItem('playlix_logged_in');
+      });
+    ")),
+    immediate = TRUE
+  )
+  
   # 🔐 LOGIN LOGIC
   observeEvent(input$login_btn, {
     
@@ -184,6 +207,8 @@ login_server <- function(input, output, session, logged_in) {
       input$login_pass == "Thisistheplaylixpassword!087"
     ) {
       logged_in(TRUE)
+      # Notify JavaScript to save login state to sessionStorage
+      session$sendCustomMessage("setLoggedIn", list())
     } else {
       output$login_error <- renderUI({
         div(
